@@ -272,8 +272,12 @@ class Music(Effect):
     style=pulse: whole board pulses with the bass."""
     name = "music"
 
+    STYLES = ("bars", "pulse", "vu", "beat", "ripple")
+
     def __init__(self, style: str = "bars", hue_speed: float = 0.03, base="000000",
                  fall: float = 1.2, peak_hold: float = 0.5, scale: float = 0.8):
+        if style not in self.STYLES:
+            raise ValueError(f"unknown music style {style!r}; choose from {self.STYLES}")
         self.audio = AudioCapture(bands=16)
         self.style, self.hue_speed, self.base = style, hue_speed, rgbf(base)
         self.fall, self.hold = fall, peak_hold
@@ -285,6 +289,25 @@ class Music(Effect):
         # 0 bottom .. `scale` top, quantised to the 6 rows; scale<1 lets loud-but-not-max music reach the F-row
         self.row_h = np.round((1 - Y) * 5) / 5 * scale
         self.top_h = scale
+        # beat / ripple state
+        self.bass_prev = 0.0
+        self.bass_avg = 0.0
+        self.last_onset = -1e9
+        self.flash = 0.0
+        self.beat_hue = 0.0
+        self.rings: list[tuple[float, float]] = []  # (t0, hue)
+
+    def _onset(self, t: float, dt: float) -> bool:
+        """Bass hit = rising bass clearly above its recent average (with a short refractory period)."""
+        bass = float(np.mean(self.audio.levels[:3]))
+        rising = bass > self.bass_prev + 0.02
+        hit = rising and bass > 0.35 and bass > self.bass_avg + 0.25 and t - self.last_onset > 0.12
+        self.bass_avg += (bass - self.bass_avg) * (1 - math.exp(-dt / 0.3)) if dt > 0 else 0.0
+        self.bass_prev = bass
+        if hit:
+            self.last_onset = t
+            self.beat_hue = (self.beat_hue + 0.17) % 1.0
+        return hit
 
     def start(self):
         self.audio.start()
@@ -304,7 +327,28 @@ class Music(Effect):
         self.peak = np.where(falling, np.maximum(self.disp, self.peak - self.fall * 0.6 * dt), self.peak)
 
     def render(self, t):
+        prev_t = self.last_t
         self._smooth(t)
+        dt = max(0.0, t - prev_t)
+        if self.style in ("beat", "ripple"):
+            hit = self._onset(t, dt)
+            if self.style == "beat":
+                self.flash = 1.0 if hit else self.flash * math.exp(-dt / 0.25)
+                return hsv(self.beat_hue + X * 0.25, 1.0, 0.05 + 0.95 * self.flash)
+            if hit:
+                self.rings.append((t, self.beat_hue))
+            self.rings = [r for r in self.rings if t - r[0] < 1.2]
+            yy = Y * 0.35
+            d = np.hypot(X - 0.5, yy - 0.175)
+            out = hsv(X * 0.3 + t * self.hue_speed, 1.0, 0.04 + 0.12 * float(np.mean(self.disp)))
+            for t0, h in self.rings:
+                ring = np.exp(-((d - (t - t0) * 1.6) / 0.07) ** 2) * (1 - (t - t0) / 1.2)
+                out = np.maximum(out, ring[:, None] * hsv(np.array([h]))[0])
+            return out
+        if self.style == "vu":
+            level = float(np.mean(self.disp)) * 1.05
+            on = np.clip((level - X) * 10, 0, 1)
+            return np.maximum(self.base, hsv(0.33 - 0.33 * X + t * self.hue_speed) * on[:, None])
         if self.style == "pulse":
             bass = float(self.disp[:3].max())
             return hsv(X * 0.6 + t * self.hue_speed, 1.0, 0.04 + 0.96 * bass ** 1.5)
@@ -319,6 +363,85 @@ class Music(Effect):
         cap = (np.abs(pk - h) < step / 2) & (pk > step) & (on < 0.5)
         out[cap] = np.maximum(out[cap], col[cap] * 0.7 + 0.15)  # brightened bar colour, not white
         return out
+
+
+def grab_screen(size=(64, 36)) -> np.ndarray:
+    """Primary screen, box-downscaled to `size`, as an (h, w, 3) uint8 array."""
+    from PIL import Image, ImageGrab
+    im = ImageGrab.grab().convert("RGB").resize(size, Image.BOX)
+    return np.asarray(im)
+
+
+class Ambient(Effect):
+    """Screen ambient: keys take the colour of the screen region under them (mode=map) or the average
+    screen colour (mode=average). saturation boosts vividness, smooth = transition time in seconds."""
+    name = "ambient"
+    fps = 30
+    GRID = (6, 16)  # rows, cols the screen is averaged into
+
+    def __init__(self, mode: str = "map", saturation: float = 1.4, smooth: float = 0.25,
+                 capture_fps: float = 20, brightness: float = 1.0, source=None):
+        if mode not in ("map", "average"):
+            raise ValueError("mode must be 'map' or 'average'")
+        self.mode, self.sat, self.smooth = mode, float(saturation), float(smooth)
+        self.period, self.brightness = 1.0 / max(1.0, float(capture_fps)), float(brightness)
+        self.threaded = source is None  # real screen grabs (~40 ms) run off the render thread
+        self.source = source or grab_screen
+        self._img = None
+        self._stop = threading.Event()
+        self.cur = None
+        self.target = np.zeros((N, 3))
+        self.last_cap = -1e9
+        self.last_t = None
+        gh, gw = self.GRID
+        self.cell = np.minimum((Y * gh).astype(int), gh - 1) * gw + np.minimum((X * gw).astype(int), gw - 1)
+
+    def start(self):
+        if self.threaded:
+            threading.Thread(target=self._grab_loop, daemon=True).start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _grab_loop(self):
+        while not self._stop.is_set():
+            t = time.monotonic()
+            try:
+                self._img = self.source()
+            except Exception:  # e.g. secure desktop / lock screen: keep the last colours
+                pass
+            self._stop.wait(max(0.0, self.period - (time.monotonic() - t)))
+
+    def _capture(self):
+        raw = self._img if self.threaded else self.source()
+        if raw is None:
+            return
+        img = np.asarray(raw, dtype=float)[..., :3] / 255.0
+        if self.mode == "average":
+            t = np.tile(img.reshape(-1, 3).mean(axis=0), (N, 1))
+        else:
+            gh, gw = self.GRID
+            h, w = img.shape[0] // gh * gh, img.shape[1] // gw * gw
+            if h == 0 or w == 0:  # tiny source image: sample instead of averaging
+                img = np.repeat(np.repeat(img, gh, axis=0), gw, axis=1)
+                h, w = img.shape[0] // gh * gh, img.shape[1] // gw * gw
+            cells = img[:h, :w].reshape(gh, h // gh, gw, w // gw, 3).mean(axis=(1, 3)).reshape(-1, 3)
+            t = cells[self.cell]
+        m = t.mean(axis=1, keepdims=True)
+        self.target = np.clip(m + (t - m) * self.sat, 0, 1)
+
+    def render(self, t):
+        if t - self.last_cap >= self.period - 1e-9:
+            self.last_cap = t
+            self._capture()
+        if self.cur is None:
+            self.cur = self.target.copy()
+        else:
+            dt = max(0.0, t - self.last_t)
+            a = 1 - math.exp(-dt / self.smooth) if self.smooth > 0 else 1.0
+            self.cur += (self.target - self.cur) * a
+        self.last_t = t
+        return self.cur * self.brightness
 
 
 class SystemMonitor(Effect):
@@ -357,7 +480,7 @@ class SystemMonitor(Effect):
         return out
 
 
-EFFECTS = {cls.name: cls for cls in (Solid, Rainbow, Breathing, Gradient, Reactive, Music, SystemMonitor)}
+EFFECTS = {cls.name: cls for cls in (Solid, Rainbow, Breathing, Gradient, Reactive, Music, Ambient, SystemMonitor)}
 
 
 # ---------------------------------------------------------------------------- engine

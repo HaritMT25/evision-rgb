@@ -24,10 +24,18 @@ MUTANTS = {
         "if r[0] == REPORT_ID and r[1:4] == pkt[1:4] and r[5:7] == pkt[5:7]:",
         "if r[0] == REPORT_ID and r[3] == pkt[3]:"),
     "lighting backup re-taken on every start (restore loses the original)": ("evision_rgb/server.py",
-        'if not os.path.isfile(os.path.join(d, "config.bin")):
-            dev = self.kb.dev',
-        'if True:
-            dev = self.kb.dev'),
+        'if not os.path.isfile(os.path.join(d, "config.bin")):\n            dev = self.kb.dev',
+        'if True:\n            dev = self.kb.dev'),
+    "ambient: no smoothing (flicker)": ("evision_rgb/effects.py",
+        "a = 1 - math.exp(-dt / self.smooth) if self.smooth > 0 else 1.0", "a = 1.0"),
+    "ambient: screen captured every frame (CPU hog)": ("evision_rgb/effects.py",
+        "if t - self.last_cap >= self.period - 1e-9:", "if True:"),
+    "ambient: screen mirrored left/right": ("evision_rgb/effects.py",
+        "np.minimum((X * gw).astype(int), gw - 1)", "np.minimum(((1 - X) * gw).astype(int), gw - 1)"),
+    "music beat: re-triggers on held bass": ("evision_rgb/effects.py",
+        "rising = bass > self.bass_prev + 0.02", "rising = True"),
+    "music vu: ignores level": ("evision_rgb/effects.py",
+        "level = float(np.mean(self.disp)) * 1.05", "level = 1.05"),
 }
 
 failed_to_catch = []
@@ -39,7 +47,7 @@ for name, (rel, old, new) in MUTANTS.items():
     shutil.copy(path, path + ".bak")
     try:
         open(path, "w", encoding="utf-8").write(src.replace(old, new, 1))
-        r = subprocess.run([PY, "-m", "unittest", "test_behavior"], cwd=os.path.join(ROOT, "tests"),
+        r = subprocess.run([PY, "-m", "unittest"], cwd=os.path.join(ROOT, "tests"),
                            capture_output=True, text=True, timeout=300)
         caught = r.returncode != 0
         tests = [l.split(" ")[1] for l in r.stderr.splitlines() if l.startswith(("FAIL:", "ERROR:"))]

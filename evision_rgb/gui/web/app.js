@@ -321,8 +321,11 @@ const EFFECTS = [
     ["fade", "Fade (s)", "range", 0.2, 2, 0.05, 0.6], ["ripple_speed", "Ripple speed", "range", 0.3, 3, 0.1, 1.2],
     ["ripple", "Ripples", "check", true]] },
   { id: "music", name: "Music visualiser", desc: "Spectrum of whatever your PC is playing (bass on the left).", p: [
-    ["style", "Style", "select", ["bars", "pulse"], "bars"], ["fall", "Fall speed", "range", 0.5, 4, 0.1, 1.2],
+    ["style", "Style", "select", ["bars", "vu", "beat", "ripple", "pulse"], "bars"], ["fall", "Fall speed", "range", 0.5, 4, 0.1, 1.2],
     ["scale", "Sensitivity", "range", 0.5, 1, 0.05, 0.8, true], ["hue_speed", "Colour drift", "range", 0, 0.3, 0.01, 0.03]] },
+  { id: "ambient", name: "Screen ambient", desc: "Keys take the colours of your screen — like a mini Ambilight.", p: [
+    ["mode", "Mode", "select", ["map", "average"], "map"], ["saturation", "Vividness", "range", 1, 2.5, 0.1, 1.4],
+    ["smooth", "Smoothing (s)", "range", 0, 1, 0.05, 0.25], ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1]] },
   { id: "sysmon", name: "System monitor", desc: "F-row = CPU load, number row = RAM use; Esc pulses above 90 % CPU.", p: [
     ["base", "Background", "color", "000010"]] },
   { id: "breathing", name: "Breathing", desc: "Whole board fades in and out.", p: [

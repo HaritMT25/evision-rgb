@@ -121,6 +121,7 @@ class App:
             pystray.MenuItem("Rainbow", run("rainbow")),
             pystray.MenuItem("Reactive typing", run("reactive")),
             pystray.MenuItem("Music visualiser", run("music")),
+            pystray.MenuItem("Screen ambient", run("ambient")),
             pystray.MenuItem("System monitor", run("sysmon")),
             pystray.MenuItem("App profiles", lambda i, it: self._safe(lambda: _post(self.port, "/apps", {"enabled": True}))),
             pystray.MenuItem("Keyboard's own effect", lambda i, it: self._safe(lambda: _post(self.port, "/stop"))),
