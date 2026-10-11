@@ -26,6 +26,10 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
 - **Album colours**: the keys take the colours of the cover of whatever is playing (Spotify, YouTube in a browser, any
   player in Windows' media controls), drifting across the board, painted as the cover itself, or as one colour.
   No account or API key. A macro pad's play/pause key shows the cover and whether it is playing.
+- **Game lighting** (CS2, Dota 2): health on the number row, ammo or the bomb timer on the F-row, team colour on WASD,
+  flashbangs and hits; Dota abilities and items on their keys with cooldowns, and the respawn countdown. It uses
+  Valve's official Game State Integration (the game sends its own state; nothing touches the game), switches on while
+  you play and has a demo. See [docs/GAMES.md](docs/GAMES.md).
 - **Layer editor**: stack effects like layers in an image editor. Each layer has its own keys, blend mode (normal,
   screen, add, brightest, multiply) and opacity. The bottom layer can be the keyboard's own built-in effect, for example
   the firmware's Rain with red WASD and typing ripples on top. Includes templates and undo/redo.
@@ -58,6 +62,7 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
 | ![Layer editor: the keyboard's own effect with red WASD on top](docs/screenshots/layers.webp) | ![Album colours: the keys take the colours of the song's cover](docs/screenshots/album-colours.webp) |
 | ![Per-key colours](docs/screenshots/custom-keys.webp) | ![Macro pad keys and knobs](docs/screenshots/macro-pad.webp) |
 | ![Automation: indicators, battery saver, timer](docs/screenshots/automation.webp) | ![Built-in effects with the firmware-exact preview](docs/screenshots/built-in-effects.webp) |
+| ![Game lighting: the CS2 demo round](docs/screenshots/games.webp) | |
 
 <sub>Taken against the keyboard and pad simulators with a pretend song (`node scripts/screenshots.mjs`).</sub>
 
@@ -106,7 +111,9 @@ with Keyboard() as kb:
 ## HTTP API & MCP
 `GET /status /info /keys /effects /modes /frame /stream /custom /settings /profiles /profiles/export` ·
 `POST /effect /custom /run /keys /clear /stop /apps /notify /timer /automation /heatmap /profiles/import /profiles/apply /restore`.
-`GET /nowplaying` says what is playing (title, artist, app, cover colours) and `/nowplaying/cover.png` serves the
+Game lighting: the game posts to `POST /game/cs2` / `/game/dota2` (with the token from its config file);
+`GET /games` shows what is installed and set up, `POST /games/setup {"game": "cs2"}` / `/games/remove` write or delete
+the config file. `GET /nowplaying` says what is playing (title, artist, app, cover colours) and `/nowplaying/cover.png` serves the
 cover. `GET /status` includes `battery` (`on_battery`, `saver`, `paused`); `POST /automation {"battery": {"enabled": false}}`
 switches the battery saver off. See `evision_rgb/server.py`.
 
@@ -123,7 +130,7 @@ Layers are listed bottom first. `keys` sets where a layer shows (every key by de
 MCP (Claude Code): `claude mcp add evision-rgb -- <venv>\Scripts\python.exe -m evision_rgb.mcp_server`
 gives the tools `keyboard_status, list_keys, list_effects, set_hardware_effect, set_custom_colors, run_live_effect,
 set_live_keys, clear_live_keys, stop_live, notify, start_timer, cancel_timer, list_profiles, apply_profile,
-export_profile, import_profile, pad_status, set_pad_key, now_playing`.
+export_profile, import_profile, pad_status, set_pad_key, now_playing, game_lighting`.
 
 ## Tests
 Behaviour specs run against a **firmware simulator** (`tests/fake_device.py`) that models the observed firmware

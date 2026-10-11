@@ -21,6 +21,9 @@ POST /profiles/import  <file contents> | {"code": "evrgb1:..."}   validated, add
 POST /profiles/apply   {"name": "Gaming"}      hardware + custom colours in one write, then the live part
 Live effect "layers" stacks effects with key masks / blend modes; layer effect "keyboard" = the stored effect.
 GET  /nowplaying | /nowplaying/cover.png       what this PC is playing (title, artist, cover colours) / its cover
+POST /game/cs2 | /game/dota2                  the game's own state (Valve Game State Integration; needs the token)
+GET  /games    POST /games {"auto": true}     game lighting status / switch on automatically while you play
+POST /games/setup {"game": "cs2"} | /games/remove {"game": "cs2"}   write / delete our config file in the game
 GET  /pad | /pad/key.png?model=akp03&i=0      macro pad state, configs, supported models / a key image
 POST /pad {"model": "akp03", "brightness": 80, "keys": [...], "knobs": [...]}   POST /pad/key {"model", "index", "key"}
 POST /pad/press {"model": "akp03", "key": 0} | {"knob": 1, "move": "left|right|press"}   run what it is set to
@@ -28,8 +31,10 @@ Only local programs and the app's own page are served: other Host names / Origin
 """
 from __future__ import annotations
 
+import hmac
 import json
 import mimetypes
+import secrets
 import os
 import sys
 import threading
@@ -42,6 +47,7 @@ from . import system
 from . import emulate  # registers the 'emulate' and 'keyboard' effects
 from . import heatmap as heatmap_mod  # registers 'heatmap'
 from . import media  # registers 'nowplaying' (album colours)
+from . import games  # registers 'cs2' and 'dota2' (game lighting)
 from . import profiles
 from .effects import EFFECTS, Engine, NAMES
 from .keyboard import CONFIG_LEN
@@ -114,6 +120,9 @@ class Controller:
         self._saving = False        # battery saver active (on battery and switched on)
         self._on_battery = None
         self.battery_paused = None  # what the battery saver stopped: {"effect", "params", "overrides"} | {"apps"}
+        self.game_on = None         # game whose lighting took over automatically ("cs2" / "dota2")
+        self.game_prev = None       # what ran before it (comes back when the game ends)
+        self._game_dismissed = None  # you chose other lighting during this game: don't take over again
         from .macropad import PadManager
         self.pads = PadManager(self)  # started by the app / `evrgb serve` (start_pads), never by tests
         threading.Thread(target=self._automation_loop, daemon=True).start()
@@ -157,6 +166,7 @@ class Controller:
         while not self._auto_stop.wait(1.0 / self._auto_hz):
             try:
                 self._battery_tick()
+                self._games_tick()
                 need = self.automation.active()
                 with self.lock:
                     eng = self.engine
@@ -185,19 +195,21 @@ class Controller:
                 self._saving = False
                 self._resume_after_battery()
 
-    def _pause_for_battery(self):
+    def _take_lighting(self) -> dict | None:
+        """Stop what the PC draws now and return it (to bring back later); None if nothing of yours ran."""
         eng = self.engine
         if self.apps:
-            self.battery_paused = {"apps": self.apps.profile}
+            p = {"apps": self.apps.profile}
             self.stop_apps()
             eng.stop()
-        elif eng.effect is not None and not (self.auto_base and eng.effect.name == "emulate"):
-            self.battery_paused = {"effect": eng.effect.name, "params": dict(eng.params),
-                                   "overrides": dict(eng.overrides)}
+            return p
+        if eng.effect is not None and not (self.auto_base and eng.effect.name == "emulate"):
+            p = {"effect": eng.effect.name, "params": dict(eng.params), "overrides": dict(eng.overrides)}
             eng.stop()  # the remembered live effect (settings) stays, so a restart brings it back too
+            return p
+        return None
 
-    def _resume_after_battery(self):
-        p, self.battery_paused = self.battery_paused, None
+    def _give_back(self, p: dict | None):
         if not p:
             return
         if "apps" in p:
@@ -207,9 +219,82 @@ class Controller:
             self.engine.run(p["effect"], **p["params"])
         self.auto_base = False
 
+    def _pause_for_battery(self):
+        self.battery_paused = self._take_lighting()
+
+    def _resume_after_battery(self):
+        p, self.battery_paused = self.battery_paused, None
+        self._give_back(p)
+
     def _lighting_chosen(self):
-        """The user picked the lighting: nothing the battery saver paused comes back over it."""
+        """The user picked the lighting: nothing the battery saver or a game paused comes back over it."""
         self.battery_paused = None
+        if self.game_on:
+            self._game_dismissed, self.game_on, self.game_prev = self.game_on, None, None
+
+    # -- game lighting: switches on by itself while you play (Valve Game State Integration)
+    def games_settings(self) -> dict:
+        g = dict(self.settings.get("games") or {})
+        if not g.get("token"):
+            g = {"auto": True, **g, "token": secrets.token_hex(16)}
+            self.update_settings({"games": g})
+        return g
+
+    def _games_tick(self):
+        cfg = self.settings.get("games") or {}
+        playing = next((g for g in games.GAMES if games.feed(g).active()), None) if cfg.get("auto", True) else None
+        with self.lock:
+            if playing is None:
+                self._game_dismissed = None
+                if self.game_on:
+                    eng = self.engine
+                    mine = eng.effect is not None and eng.effect.name == self.game_on
+                    prev, self.game_on, self.game_prev = self.game_prev, None, None
+                    if mine:
+                        eng.stop()
+                        self._give_back(prev)
+                return
+            if self._saving or playing == self._game_dismissed or playing == self.game_on:
+                return
+            if self.game_on is None:
+                self.game_prev = self._take_lighting()
+            self.stop_apps()
+            self.engine.run(playing)
+            self.game_on, self.auto_base = playing, False
+
+    def game_post(self, game: str, state) -> None:
+        """State posted by the game itself. The token proves it came from the config file we wrote."""
+        if game not in games.GAMES:
+            raise KeyError(game)
+        token = ((state or {}).get("auth") or {}).get("token") if isinstance(state, dict) else None
+        if not isinstance(token, str) or not hmac.compare_digest(token, self.games_settings()["token"]):
+            raise PermissionError("wrong game token")
+        games.feed(game).update(state)
+
+    def games_status(self) -> dict:
+        found = games.find_games()
+        out = {}
+        for gid, g in games.GAMES.items():
+            f, d = games.feed(gid), found.get(gid)
+            out[gid] = {"name": g["name"], "installed": d is not None, "path": d,
+                        "configured": bool(d) and games.config_written(gid, d), "receiving": f.active(),
+                        "last_s": None if f.state is None else round(f.clock() - f.received, 1),
+                        "launch_option": g.get("launch_option")}
+        return {"auto": (self.settings.get("games") or {}).get("auto", True), "steam": games.steam_path(),
+                "on": self.game_on, "games": out}
+
+    def games_setup(self, game: str, remove: bool = False) -> dict:
+        if game not in games.GAMES:
+            raise KeyError(f"unknown game {game!r}")
+        d = games.find_games().get(game)
+        if d is None:
+            raise FileNotFoundError(f"{games.GAMES[game]['name']} is not installed in any Steam library")
+        if remove:
+            games.remove_config(game, d)
+        else:
+            port = getattr(self, "port", DEFAULT_PORT)
+            games.write_config(game, d, self.games_settings()["token"], port=port)
+        return self.games_status()
 
     def battery_status(self) -> dict:
         p = self.battery_paused
@@ -430,7 +515,8 @@ def make_handler(ctl: Controller):
                 self._send(403, {"error": "this API only answers 127.0.0.1 / localhost"})
             elif origin is not None and origin.lower() not in {"http://" + h for h in ours}:
                 self._send(403, {"error": "requests from web pages are not allowed"})
-            elif post and not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
+            elif post and not self.path.startswith("/game/") and \
+                    not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
                 self._send(415, {"error": "send JSON (Content-Type: application/json)"})
             else:
                 return True
@@ -491,6 +577,8 @@ def make_handler(ctl: Controller):
                     return
                 if u.path == "/stream":
                     return self._stream()
+                if u.path == "/games":  # (not under the app lock: looks through the Steam folders)
+                    return self._send(200, ctl.games_status())
                 if u.path == "/nowplaying":  # (not under the app lock: asking Windows can take a moment)
                     return self._send(200, media.public(media.source().snapshot(max_age=1.5)))
                 if u.path == "/nowplaying/cover.png":
@@ -571,6 +659,19 @@ def make_handler(ctl: Controller):
                     return
                 req = json.loads(body or b"{}")
                 p = self.path
+                if p.startswith("/game/"):  # the game itself, several times a second: no app lock needed
+                    try:
+                        ctl.game_post(p[len("/game/"):], req)
+                    except KeyError:
+                        return self._send(404, {"error": "unknown game"})
+                    except PermissionError as e:
+                        return self._send(403, {"error": str(e)})
+                    return self._send(200, {})
+                if p in ("/games/setup", "/games/remove"):
+                    try:
+                        return self._send(200, ctl.games_setup(req.get("game"), remove=p.endswith("remove")))
+                    except FileNotFoundError as e:
+                        return self._send(404, {"error": str(e)})
                 with ctl.lock:
                     ctl._info_cache = (0.0, None)
                     if p == "/notify":
@@ -633,6 +734,11 @@ def make_handler(ctl: Controller):
                         return self._send(200, {"apps": "stopped"})
                     if p == "/settings":
                         return self._send(200, ctl.update_settings(req))
+                    if p == "/games":
+                        if not isinstance(req.get("auto"), bool):
+                            raise ValueError("auto must be true or false")
+                        ctl.update_settings({"games": {**ctl.games_settings(), "auto": req["auto"]}})
+                        return self._send(200, {"auto": req["auto"]})
                     if p == "/profiles/import":
                         prof = ctl.import_profile(req)
                         return self._send(200, {"name": prof["name"], "profile": prof})
@@ -687,7 +793,9 @@ def make_handler(ctl: Controller):
 
 def build_server(ctl: Controller, port: int = DEFAULT_PORT) -> ThreadingHTTPServer:
     ThreadingHTTPServer.daemon_threads = True
-    return ThreadingHTTPServer(("127.0.0.1", port), make_handler(ctl))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(ctl))
+    ctl.port = httpd.server_address[1]  # game config files point the game here
+    return httpd
 
 
 def serve(port: int = DEFAULT_PORT):

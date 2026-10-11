@@ -101,6 +101,7 @@ def run_live_effect(effect: str, params: dict | None = None) -> dict:
     """Start a host-rendered live effect (not saved; ends when stopped). effect: rainbow, breathing, gradient,
     solid, reactive (typing ripples), music (audio visualiser of whatever is playing), sysmon (CPU/RAM bars),
     ambient (screen colours), nowplaying (colours of the cover of what is playing; style flow|cover|solid),
+    cs2 / dota2 (game lighting from the game's own state; {"demo": true} plays a scripted round),
     layers (stack several effects).
     Example params: rainbow {"speed": 0.3}, breathing {"color": "ff0040", "period": 3},
     music {"style": "bars"|"vu"|"beat"|"ripple"|"pulse"}, reactive {"base": "000010", "color": "ffffff"},
@@ -197,6 +198,14 @@ def now_playing() -> dict:
     artist, app, whether it is playing, and the main colours of its cover. The 'nowplaying' live effect
     lights the keys in those colours."""
     return call("/nowplaying")
+
+
+@mcp.tool()
+def game_lighting() -> dict:
+    """Game lighting (CS2, Dota 2 via Valve's Game State Integration): which games are installed and set up,
+    whether one is sending its state now, and whether lighting switches on automatically while playing.
+    Run the effect "cs2" or "dota2" with params {"demo": true} to show a scripted round without the game."""
+    return call("/games")
 
 
 @mcp.tool()

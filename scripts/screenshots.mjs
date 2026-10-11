@@ -67,7 +67,12 @@ try {
   // 5. automation: indicators, battery saver, timer
   await js(`showTab("auto");`); await wait(1500);
   await shot("automation");
-  // 6. built-in effects with the firmware-exact preview
+  // 6. game lighting: the CS2 demo round (the preview server pretends CS2 is installed)
+  await js(`showTab("games");`); await wait(900);
+  await js(`$('.card[data-game="cs2"] [data-demo]').click();`); await wait(4600);  // a few seconds into the round: shooting
+  await shot("games");
+  await js(`await api("/stop", {});`); await wait(500);
+  // 7. built-in effects with the firmware-exact preview
   await js(`showTab("light");`); await wait(1500);
   await shot("built-in-effects");
   ws.close();

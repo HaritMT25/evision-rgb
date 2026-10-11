@@ -206,6 +206,19 @@ try {
   await js(`window.scrollTo(0, 0); $('.card[data-effect="nowplaying"]').scrollIntoView({block: "center"}); await T.wait(300);`);
   await shot("album-colours");
 
+  // ---- game lighting (the preview server pretends CS2 is installed in a temporary Steam folder)
+  await js(`showTab("games"); await T.wait(900);`);
+  check("the Games tab lists CS2 and Dota 2", await js(`return $$("#gameCards .card").length === 2`));
+  check("CS2 shows as installed with a Set up button", await js(`return !!$('.card[data-game="cs2"] [data-setup]')`));
+  check("Dota 2 shows as not found", /Not found/.test(await js(`return $('.card[data-game="dota2"] .gstate').textContent`)));
+  await js(`$('.card[data-game="cs2"] [data-setup]').click(); await T.wait(900);`);
+  check("Set up writes the config and offers to remove it", await js(`return !!$('.card[data-game="cs2"] [data-remove]')`));
+  await js(`$('.card[data-game="cs2"] [data-demo]').click(); await T.wait(1200);`);
+  check("Try the demo plays CS2 lighting", (await js(`return (await api("/status")).effect`)) === "cs2");
+  await shot("games");
+  await js(`$('.card[data-game="cs2"] [data-remove]').click(); await T.wait(700);`);
+  check("Remove set-up deletes it again", await js(`return !!$('.card[data-game="cs2"] [data-setup]')`));
+
   // ---- battery saver & still pictures
   await js(`showTab("auto"); await T.wait(1300);`);
   check("the battery saver switch is on by default", await js(`return $('[data-a="battery.enabled"]').checked === true`));

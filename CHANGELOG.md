@@ -1,6 +1,10 @@
 # Changelog
 
 ## 0.4.0 (2026-10-11)
+- **Game lighting** for Counter-Strike 2 and Dota 2 from Valve's Game State Integration: health, ammo, the bomb
+  timer, team colour, flashbangs and hits; Dota abilities, items, cooldowns and the respawn countdown. One click
+  writes the game's config file; lighting switches on while you play and back afterwards; a demo shows it without
+  the game. Games tab, `POST /game/<game>`, `GET /games`, MCP tool `game_lighting`.
 - **Album colours**: a live effect that lights the keys in the colours of the cover of whatever is playing
   (Spotify, YouTube in a browser, any player in Windows' media controls), drifting, painted as the cover or as one
   colour, dimmed while paused. No account or API key. A macro pad's play/pause key shows the cover.

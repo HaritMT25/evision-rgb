@@ -47,8 +47,11 @@ def main():
     from evision_rgb.server import Controller, build_server
     neutral = {"caps": lambda: False, "mic_muted": lambda: False, "idle": lambda: 0.0, "locked": lambda: False,
                "now": lambda: dt.datetime(2026, 1, 1, 12)}
-    from evision_rgb import media
+    from evision_rgb import games, media
     media.set_source(media.NowPlaying(fetch=demo_player))  # a pretend song, never what this PC plays
+    steam = os.path.join(tmp, "Steam")  # a pretend Steam with CS2 installed: "Set up" writes there, never into real games
+    os.makedirs(os.path.join(steam, "steamapps", "common", "Counter-Strike Global Offensive", "game", "csgo", "cfg"))
+    games.steam_path = lambda: steam
     ctl = Controller(probes=neutral, hook_keys=False)
     ctl.pads.send_keys = lambda keys: print("pad would press", "+".join(keys), flush=True)
     ctl.pads.launch = lambda target: print("pad would open", target, flush=True)

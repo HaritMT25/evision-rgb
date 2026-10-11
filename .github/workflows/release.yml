@@ -43,7 +43,7 @@ jobs:
         shell: pwsh
         run: |
           $v = (.venv\Scripts\python -c "import evision_rgb; print(evision_rgb.__version__)").Trim()
-          .venv\Scripts\python scripts\third_party_notices.py "dist\EVision RGB\THIRD-PARTY-NOTICES.txt"
+          .venv\Scripts\python scripts\third_party_notices.py "dist\EVision RGB\THIRD-PARTY-NOTICES.txt" --build "build\pyi\EVision RGB" --dist "dist\EVision RGB"
           Copy-Item LICENSE, README.md, CHANGELOG.md "dist\EVision RGB\"
           $zip = "EVision-RGB-$v-windows-x64.zip"
           Compress-Archive -Path "dist\EVision RGB" -DestinationPath $zip

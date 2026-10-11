@@ -197,7 +197,8 @@ async function previewLoop() {
 function modeLabel(name) { return (name || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()); }
 // a live effect's name as the app shows it ("nowplaying" -> "Album colours")
 function effectLabel(id) {
-  const names = { layers: "Layer stack", heatmap: "Typing heatmap", emulate: "Keyboard effect copy", keyboard: "Keyboard's own effect" };
+  const names = { layers: "Layer stack", heatmap: "Typing heatmap", emulate: "Keyboard effect copy", keyboard: "Keyboard's own effect",
+    cs2: "CS2 game lighting", dota2: "Dota 2 game lighting" };
   const e = EFFECTS.find(x => x.id === id);
   return e ? e.name : names[id] || modeLabel(id);
 }
@@ -736,6 +737,37 @@ function renderTimer() {
     : "The number row fills up as time passes; the board flashes when it's done.";
 }
 
+// ------------------------------------------------------------------ game lighting tab
+const GAME_LEGEND = {
+  cs2: "Number row = health · F-row = ammo, or the bomb timer once it is planted · WASD = your team. Flashbangs, hits, kills and round results flash the board.",
+  dota2: "Number row = health · F-row = mana · Q W E D F R = abilities, Z X C V B N = items, T = TP scroll (bright = ready, dim red = cooldown). The number row counts down to respawn.",
+};
+async function gamesLoad() {
+  const st = await api("/games");
+  $("#gamesAuto").checked = !!st.auto;
+  $("#gamesNow").textContent = st.on ? `now: ${st.games[st.on].name}` : st.steam ? "" : "Steam was not found on this PC.";
+  $("#gameCards").innerHTML = Object.entries(st.games).map(([id, g]) => {
+    const state = g.receiving ? "● Receiving the game's state."
+      : g.configured ? "Set up. Start the game to see it." + (g.launch_option ? ` In Steam, add ${g.launch_option} to its launch options.` : "")
+      : g.installed ? "Installed, not set up yet." : "Not found in a Steam library on this PC.";
+    const btn = !g.installed ? "" : g.configured ? '<button class="btn" data-remove>Remove set-up</button>' : '<button class="btn primary" data-setup>Set up</button>';
+    return `<div class="card" data-game="${esc(id)}"><h3>${esc(g.name)}<button class="btn" data-demo>Try the demo</button></h3>
+      <div class="desc">${GAME_LEGEND[id] || ""}</div><div class="hint gstate">${esc(state)}</div><div class="row">${btn}</div></div>`;
+  }).join("");
+  for (const card of $$("#gameCards .card")) {
+    const id = card.dataset.game;
+    $("[data-demo]", card).onclick = () => safe(() => api("/run", { effect: id, params: { demo: true } }), "Demo round on the keyboard (Stop live to end it)");
+    const s = $("[data-setup]", card), r = $("[data-remove]", card);
+    if (s) s.onclick = () => safe(async () => { await api("/games/setup", { game: id }); await gamesLoad(); }, "Set up. Start the game to see it.");
+    if (r) r.onclick = () => safe(async () => { await api("/games/remove", { game: id }); await gamesLoad(); }, "Set-up removed");
+  }
+}
+function initGames() {
+  $("#gamesAuto").onchange = () => safe(() => api("/games", { auto: $("#gamesAuto").checked }));
+  gamesLoad().catch(() => { });
+  setInterval(() => { if (S.tab === "games" && !document.hidden) gamesLoad().catch(() => { }); }, 3000);
+}
+
 // ------------------------------------------------------------------ app profiles tab
 function effectOptions(sel) {
   return [`<option value="${NO_EFFECT}" ${!sel ? "selected" : ""}>Keyboard's own effect</option>`]
@@ -1126,6 +1158,7 @@ function showTab(t) {
   if (S.frame && !editingCustom()) { colorKeys(S.frame.colors); setCaption(S.frame); }  // no editor colours left behind
   if (t === "light") loadInfo().catch(() => { });
   if (t === "pad" && S.pad.st) padLoad().catch(() => { });
+  if (t === "games") gamesLoad().catch(() => { });
 }
 // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) undo and redo in the custom-key painter and the layer editor
 document.addEventListener("keydown", e => {
@@ -1141,7 +1174,7 @@ document.addEventListener("keydown", e => {
 });
 async function boot() {
   [S.layout, S.modes, S.settings] = await Promise.all([fetch("ui/layout.json").then(r => r.json()), api("/modes"), api("/settings")]);
-  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); initPad(); await initAutomation();
+  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); initPad(); initGames(); await initAutomation();
   await initSettings();
   $$("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#conflictPill").onclick = () => showTab("settings");

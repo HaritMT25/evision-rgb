@@ -34,6 +34,8 @@
         <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/></svg>Automation</button>
       <button data-tab="apps">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg>App Profiles</button>
+      <button data-tab="games">
+        <svg viewBox="0 0 24 24"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.9 4A2.5 2.5 0 0 1 16.6 19L15 17H9l-1.6 2a2.5 2.5 0 0 1-4.4-1.1l-.9-4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3M15.5 13h.01M17.5 14.5h.01"/></svg>Games</button>
       <button data-tab="pad">
         <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="4" height="4" rx="1"/><rect x="11" y="7" width="4" height="4" rx="1"/><rect x="5.5" y="13" width="4" height="4" rx="1"/><rect x="11" y="13" width="4" height="4" rx="1"/><circle cx="18.2" cy="10" r="1.6"/><circle cx="18.2" cy="15.5" r="1.6"/></svg>Macro Pad</button>
       <button data-tab="settings">
@@ -223,6 +225,19 @@
           <button class="btn" id="appsPick">+ Add the next app I click (3 s)</button>
           <button class="btn primary" id="appsSave">Save &amp; apply</button>
         </div>
+      </div>
+
+      <!-- game lighting -->
+      <div class="tab" id="tab-games">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <div class="row"><label class="toggle"><input type="checkbox" id="gamesAuto"><span></span></label>
+            <h2 style="margin:0">Switch to game lighting while you play</h2></div>
+          <div class="hint" id="gamesNow"></div>
+        </div>
+        <p class="hint" style="margin:0 0 12px">The game sends its own state to this app through Valve's official Game State
+          Integration, the feed tournament overlays use. Nothing is added to the game: "Set up" writes one small config file
+          into its cfg folder. When the game closes, your lighting comes back.</p>
+        <div class="cards" id="gameCards"></div>
       </div>
 
       <!-- macro pad -->
