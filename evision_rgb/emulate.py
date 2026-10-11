@@ -185,11 +185,130 @@ class Emulated(Effect):
         return np.clip(np.asarray(out, dtype=float) * self.level, 0, 1)
 
 
-def emulator(cfg: dict, custom: dict | None = None) -> Emulated:
-    """Build an emulator from Keyboard.info()-style fields."""
+def emulator(cfg: dict, custom: dict | None = None, dim: bool = True) -> Emulated:
+    """Build an (approximate) emulator from Keyboard.info()-style fields."""
     return Emulated(mode=cfg.get("mode_id", cfg.get("mode", 6)), brightness=cfg.get("brightness", 4),
                     speed=cfg.get("speed", 2), direction=cfg.get("direction", 0), random=cfg.get("random", 0),
-                    color=cfg.get("color", "ffffff"), custom=custom, variant=cfg.get("variant", 0))
+                    color=cfg.get("color", "ffffff"), custom=custom, variant=cfg.get("variant", 0), dim=dim)
 
 
 EFFECTS["emulate"] = Emulated
+
+
+# ---------------------------------------------------------------------------------------------
+# Exact emulation: run the keyboard firmware's own effect code (when the firmware is available)
+# ---------------------------------------------------------------------------------------------
+_FW = {"base": None, "tried": False, "caps": None, "source": None, "disabled": False}
+_FW_LOCK = threading.Lock()
+FULL_SCALE = 200  # firmware output at brightness 4 (255 * ~0.78)
+
+
+def set_device_caps(caps: bytes):
+    """Remember the connected keyboard's capability block; the firmware image must match it."""
+    with _FW_LOCK:
+        if _FW["caps"] != caps:
+            _FW.update(caps=caps, tried=False, base=None)
+
+
+def firmware_base():
+    """Booted firmware engine (shared template), or None if the firmware isn't on this PC."""
+    with _FW_LOCK:
+        if _FW["disabled"]:
+            return None
+        if not _FW["tried"]:
+            _FW["tried"] = True
+            try:
+                from .firmware import FirmwareLighting, find_firmware
+                img = find_firmware(_FW["caps"])
+                if img is not None:
+                    _FW["base"] = FirmwareLighting(img)
+                    _FW["source"] = "AJAZZ updater"
+            except Exception as e:  # numba/pefile missing, corrupt updater...
+                _FW["base"] = None
+                _FW["source"] = f"unavailable: {e!r}"
+        return _FW["base"]
+
+
+def firmware_ready():
+    """The firmware engine if it has already been booted (never blocks)."""
+    return _FW["base"] if _FW["tried"] and not _FW["disabled"] else None
+
+
+def firmware_status() -> dict:
+    if not _FW["tried"] and not _FW["disabled"]:
+        return {"exact": False, "source": "starting…"}
+    return {"exact": _FW["base"] is not None, "source": _FW["source"]}
+
+
+class FirmwareEmulated(Effect):
+    """A built-in effect rendered by the keyboard's own firmware code (exact)."""
+    name = "emulate"
+    fps = 30
+
+    def __init__(self, base, mode=6, brightness=4, speed=2, direction=0, random=0, color="ffffff",
+                 custom: dict | None = None, variant: int = 0, dim: bool = True, config: bytes | None = None):
+        import copy
+        self.fl = copy.deepcopy(base)
+        cfg = bytearray(config or bytes(0x1D))
+        cfg[1], cfg[2], cfg[3], cfg[4], cfg[5] = int(mode), int(brightness), int(speed), int(direction), int(random)
+        cfg[6:9] = bytes(int(v * 255 + 0.5) for v in rgbf(color))
+        cfg[18] = int(variant)
+        self.fl.configure(bytes(cfg))
+        if custom:
+            frame = bytearray(384)
+            for k, c in custom.items():
+                if k.lower() in INDEX:
+                    s = SLOTS_BY_INDEX[INDEX[k.lower()]]
+                    frame[s * 3:s * 3 + 3] = bytes(int(v * 255 + 0.5) for v in rgbf(c))
+            self.fl.set_custom(bytes(frame), cfg[25] if len(cfg) > 25 else 0)
+        self.dim = dim
+        self.raw = not dim          # streamed to the keyboard as-is (already device LED values)
+        self.mode = ID.get(int(mode), "normal")
+        self.last_t = None
+        self.lock = threading.Lock()
+        self.events = KeyEvents(self.press)
+        self.fl.advance(0.05)       # let the effect draw its first frame
+
+    def press(self, name: str):
+        with self.lock:
+            self.fl.press(int(SLOTS_BY_INDEX[INDEX[name.lower()]]))
+
+    def start(self):
+        self.events.start()
+
+    def stop(self):
+        self.events.stop()
+
+    def render(self, t):
+        with self.lock:
+            if self.last_t is not None and t > self.last_t:
+                self.fl.advance(min(0.25, t - self.last_t))
+            self.last_t = t
+            f = self.fl.frame()[SLOTS_BY_INDEX].astype(float)
+        return np.clip(f / FULL_SCALE, 0, 1) if self.dim else f / 255.0
+
+
+from .effects import SLOTS as SLOTS_BY_INDEX  # noqa: E402  (LED slot per key, in NAMES order)
+
+_approx_emulator = emulator
+
+
+def emulator(cfg: dict, custom: dict | None = None, dim: bool = True, exact: bool = True):
+    """Exact firmware emulation when available, otherwise the approximation."""
+    base = (firmware_ready() if _FW_LOCK.locked() else firmware_base()) if exact else None
+    if base is not None:
+        return FirmwareEmulated(base, mode=cfg.get("mode_id", cfg.get("mode", 6)), brightness=cfg.get("brightness", 4),
+                                speed=cfg.get("speed", 2), direction=cfg.get("direction", 0), random=cfg.get("random", 0),
+                                color=cfg.get("color", "ffffff"), custom=custom, variant=cfg.get("variant", 0), dim=dim)
+    return _approx_emulator(cfg, custom, dim=dim)
+
+
+def _make_emulate(mode=6, brightness=4, speed=2, direction=0, random=0, color="ffffff", custom=None,
+                  variant=0, dim=True, **_):
+    """Engine entry point for EFFECTS['emulate']."""
+    return emulator({"mode": mode, "brightness": brightness, "speed": speed, "direction": direction,
+                     "random": random, "color": color, "variant": variant}, custom, dim=dim)
+
+
+_make_emulate.name = "emulate"
+EFFECTS["emulate"] = _make_emulate

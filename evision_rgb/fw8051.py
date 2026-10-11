@@ -169,6 +169,18 @@ class CPU8051:
                 raise CPUError(f"no return from {addr:#06x} after {max_steps} steps (pc={self.pc:#06x})")
         return self.steps - start
 
+    def run_until(self, addr: int, max_steps: int = 5_000_000) -> int:
+        """Run from the current PC until PC == addr (e.g. boot code until main)."""
+        start = self.steps
+        ops = self._ops
+        while self.pc != addr:
+            op = self.fetch()
+            ops[op](op)
+            self.steps += 1
+            if self.steps - start > max_steps:
+                raise CPUError(f"did not reach {addr:#06x} within {max_steps} steps (pc={self.pc:#06x})")
+        return self.steps - start
+
     def _build(self):
         c = self
         ops = [None] * 256

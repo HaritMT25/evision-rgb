@@ -15,6 +15,9 @@ import traceback
 import urllib.request
 
 from .. import settings as settings_mod
+
+# numba (exact firmware effect emulation) caches compiled code here; the frozen app dir is read-only
+os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(settings_mod.DIR, "numba-cache"))
 from ..server import DEFAULT_PORT, Controller, build_server
 
 HERE = os.path.dirname(os.path.abspath(__file__))

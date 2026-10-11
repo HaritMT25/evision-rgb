@@ -21,7 +21,7 @@ def emu(mode, **kw):
     from evision_rgb.emulate import emulator
     cfg = {"mode": MODES[mode], "brightness": 4, "speed": 2, "direction": 0, "random": 0, "color": "ff0000", "variant": 0}
     cfg.update(kw)
-    return emulator(cfg)
+    return emulator(cfg, exact=False)  # these specs describe the fallback approximation
 
 
 def frames(e, secs=2.0, fps=20):
@@ -156,7 +156,7 @@ class Emulation(unittest.TestCase):
     def test_custom_mode_shows_the_stored_layout(self):
         from evision_rgb.emulate import emulator
         e = emulator({"mode": MODES["custom"], "brightness": 4, "speed": 0, "direction": 0, "random": 0,
-                      "color": "000000"}, custom={"W": "00ff00"})
+                      "color": "000000"}, custom={"W": "00ff00"}, exact=False)
         c = np.asarray(e.render(0.0))
         self.assertTrue(np.allclose(c[INDEX["w"]], [0, 1, 0]))
         self.assertTrue(np.allclose(c[INDEX["q"]], [0, 0, 0]))

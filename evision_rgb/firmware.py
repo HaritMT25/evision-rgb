@@ -1,0 +1,115 @@
+"""Run the keyboard's own firmware lighting code (AK820 fw V0103, 8051) to get exact effect frames.
+
+The firmware image is NOT shipped with this project. It is extracted at runtime from the official
+AJAZZ updater on the user's PC (``Updata\\*.exe``, PE resource type "DOWNLOAD", id 129), and the image
+is accepted only if its capability block matches the connected keyboard's.
+
+Firmware facts used here (from static analysis, see docs/FIRMWARE.md):
+- app code starts at 0x2800 (0x2800: LJMP 0xDFD0 startup -> main at 0xE905)
+- XDATA 0x0A64: config block (same layout as host command 0x06); 0x0A65 = mode
+- CODE 0xA700 + 0x200*area: custom colours (area chosen by config byte 25)
+- XDATA 0x066D: LED frame, 128 x [0xFF, R, G, B], brightness already applied
+- lighting task 0x8B5C (dispatch table 0x8C13); tick routine 0x947F advances the effect
+  counter every 2 timer interrupts; Timer1 = 24 MHz/12, reload 800 -> 400 us -> 1 tick = 0.8 ms
+- gates: XDATA 0x05C6 = USB configured, 0x0A5F >= 30 start-up delay, 0x0A4B = power-on show
+"""
+from __future__ import annotations
+
+import glob
+import os
+
+import numpy as np
+
+from .fw8051 import CPU8051
+
+APP_BASE = 0x2800
+STARTUP, MAIN = 0xDFD0, 0xE905
+INIT_CALLS = (0x2FE2, 0xE587, 0xDC37, 0xEEF3, 0xE16D, 0xEF80)
+TICK_FN, LIGHT_FN = 0x947F, 0x8B5C
+POST_CALL = 0x8CB1          # LCALL 0xDCD7 ; LCALL 0xED4D (hardware output stage, not needed here)
+CFG, MODE, CUSTOM_BASE, FRAME = 0x0A64, 0x0A65, 0xA700, 0x066D
+TICK_S = 0.0008
+CAPS_SIG = bytes.fromhex("aa5500000d805000020000")
+
+
+def extract_from_updater(path: str) -> list[bytes]:
+    """Firmware images embedded in an official updater exe (resource type 'DOWNLOAD')."""
+    import pefile
+    pe = pefile.PE(path, fast_load=False)
+    out = []
+    for t in getattr(pe, "DIRECTORY_ENTRY_RESOURCE", type("x", (), {"entries": []})).entries:
+        if str(t.name) != "DOWNLOAD":
+            continue
+        for e in t.directory.entries:
+            for lang in e.directory.entries:
+                d = lang.data.struct
+                blob = pe.get_data(d.OffsetToData, d.Size)
+                if blob[APP_BASE:APP_BASE + 3][:1] == b"\x02" and CAPS_SIG in blob[APP_BASE:APP_BASE + 64]:
+                    out.append(blob)
+    return out
+
+
+def find_firmware(caps: bytes | None = None, search: list[str] | None = None) -> bytes | None:
+    """Locate the AK820 firmware image on this PC. `caps` (device reply to cmd 0x03) must match."""
+    roots = search or [os.path.join(os.environ.get(v, ""), "AJAZZ") for v in ("ProgramFiles(x86)", "ProgramFiles")]
+    for root in roots:
+        for exe in sorted(glob.glob(os.path.join(root, "**", "Updata", "*.exe"), recursive=True), reverse=True):
+            try:
+                for img in extract_from_updater(exe):
+                    if caps is None or caps[:34] == img[APP_BASE + 3:APP_BASE + 3 + 34][:len(caps[:34])]:
+                        return img
+            except Exception:
+                continue
+    return None
+
+
+class FirmwareLighting:
+    """The firmware's lighting engine running in an 8051 interpreter."""
+
+    def __init__(self, image: bytes, fast: bool = True):
+        if fast:
+            from .fw8051_fast import FastCPU
+            cpu = FastCPU(image)
+        else:
+            cpu = CPU8051(image)
+        cpu.pc = STARTUP
+        cpu.run_until(MAIN)
+        for fn in INIT_CALLS:
+            cpu.call(fn)
+        cpu.code[POST_CALL:POST_CALL + 3] = [0x22, 0, 0]  # RET: skip the hardware output stage
+        cpu.xdata[0x05C6] = 1     # USB configured
+        cpu.xdata[0x0A5F] = 30    # start-up delay elapsed
+        cpu.xdata[0x0A4B] = 0     # no power-on show
+        self.cpu = cpu
+        self.ticks = 0
+
+    def configure(self, config: bytes):
+        """Apply a host-format config block (bytes 0.. of command 0x06 / 0x05)."""
+        self.cpu.xdata[CFG:CFG + len(config)] = list(config)
+
+    def set_custom(self, frame: bytes, area: int = 0):
+        a = CUSTOM_BASE + 0x200 * area
+        self.cpu.code[a:a + 384] = list(frame)
+
+    def advance(self, seconds: float):
+        n = max(1, round(seconds / TICK_S))
+        x = self.cpu.xdata
+        for _ in range(n):
+            x[0x0956] = 2
+            self.cpu.call(TICK_FN)
+            self.cpu.call(LIGHT_FN)
+        self.ticks += n
+
+    def frame(self) -> np.ndarray:
+        """(128, 3) uint8 RGB per LED slot, as the LEDs show it (brightness applied)."""
+        buf = np.asarray(self.cpu.xdata[FRAME:FRAME + 512], dtype=np.uint8).reshape(128, 4)
+        return buf[:, 1:4].copy()
+
+    KEY_FN = 0xDF3C        # per-key-press handler (dispatches by mode; slot in XDATA 0x08EB)
+
+    def press(self, slot: int):
+        """Feed a key press (LED slot) to the firmware's own key handler (reactive effects)."""
+        self.cpu.xdata[0x09A9] = 1      # "new key event" flag set by the key scanner
+        self.cpu.xdata[0x08EB] = slot
+        self.cpu.call(self.KEY_FN)
+        self.cpu.xdata[0x09A9] = 0      # the main loop clears it after handling

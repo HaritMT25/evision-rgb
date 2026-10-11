@@ -548,7 +548,7 @@ class Engine:
                 except Exception:  # a broken overlay must never kill the render loop
                     pass
             self.last = colors
-            self.stream.set_frame(to_frame(colors))
+            self.stream.set_frame(to_frame(colors, 1.0 if getattr(eff, "raw", False) else 2.2))
             self.stream.show()
             frames += 1
             now = time.monotonic()

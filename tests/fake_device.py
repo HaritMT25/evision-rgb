@@ -181,6 +181,11 @@ class FakeHidModule:
 def install(test_case) -> FakeKeyboard:
     """Patch evision_rgb.protocol.hid with a fresh simulated keyboard for the duration of a test."""
     import evision_rgb.protocol as proto
+    from evision_rgb import emulate
+    # the simulated keyboard is not the real one: use the approximation, never the firmware engine
+    saved = dict(emulate._FW)
+    emulate._FW.update(tried=True, base=None, source="disabled in tests", disabled=True)
+    test_case.addCleanup(lambda: (emulate._FW.clear(), emulate._FW.update(saved)))
     kb = FakeKeyboard()
     orig = proto.hid
     proto.hid = FakeHidModule(kb)

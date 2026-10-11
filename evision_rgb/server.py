@@ -68,6 +68,12 @@ class Controller:
         self._sync_key_hook()
         self.show_cb = None  # set by the desktop app: bring its window to front
         self.backup_dir = self.ensure_backup()
+        try:  # exact effect emulation needs the firmware image that matches this keyboard
+            emulate.set_device_caps(self.kb.dev.capabilities())
+        except Exception:
+            pass
+        # boot the firmware engine (JIT compile + extraction) without blocking start-up
+        threading.Thread(target=emulate.firmware_base, daemon=True).start()
         self._info_cache = (0.0, None)
         self._emu = (None, None, 0.0)  # (config key, emulator, t0) for the preview
         threading.Thread(target=self._automation_loop, daemon=True).start()
@@ -262,6 +268,8 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.heatmap_status())
                     if u.path == "/automation":
                         return self._send(200, ctl.automation.cfg)
+                    if u.path == "/firmware":
+                        return self._send(200, emulate.firmware_status())
                     if u.path == "/conflicts":
                         return self._send(200, system.conflicts())
                     if u.path == "/foreground":
