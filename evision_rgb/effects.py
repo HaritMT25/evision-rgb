@@ -80,6 +80,21 @@ class Solid(Effect):
         return self.base
 
 
+class Mirror(Effect):
+    """Static copy of what the keyboard has stored (used under automation overlays)."""
+    name = "mirror"
+    fps = 30
+
+    def __init__(self, colors: dict | None = None, color="000000"):
+        self.base = np.tile(rgbf(color), (N, 1))
+        for k, c in (colors or {}).items():
+            if k.lower() in INDEX:
+                self.base[INDEX[k.lower()]] = rgbf(c)
+
+    def render(self, t):
+        return self.base
+
+
 class Rainbow(Effect):
     """Horizontal rainbow wave. speed = cycles/s, scale = rainbows across the board, angle in degrees."""
     name = "rainbow"
@@ -480,7 +495,7 @@ class SystemMonitor(Effect):
         return out
 
 
-EFFECTS = {cls.name: cls for cls in (Solid, Rainbow, Breathing, Gradient, Reactive, Music, Ambient, SystemMonitor)}
+EFFECTS = {cls.name: cls for cls in (Solid, Mirror, Rainbow, Breathing, Gradient, Reactive, Music, Ambient, SystemMonitor)}
 
 
 # ---------------------------------------------------------------------------- engine
@@ -498,6 +513,7 @@ class Engine:
         self.fps_actual = 0.0
         self.last: np.ndarray | None = None  # last rendered colours (N,3) for UI preview
         self.params: dict = {}
+        self.post = None  # optional fn(colors, monotonic_t) -> colors (automation overlays)
 
     def _ensure_stream(self):
         if self.stream is None:
@@ -526,6 +542,11 @@ class Engine:
             with self.lock:
                 for i, c in self.overrides.items():
                     colors[i] = c
+            if self.post:
+                try:
+                    colors = self.post(colors, time.monotonic())
+                except Exception:  # a broken overlay must never kill the render loop
+                    pass
             self.last = colors
             self.stream.set_frame(to_frame(colors))
             self.stream.show()

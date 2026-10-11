@@ -36,6 +36,20 @@ MUTANTS = {
         "rising = bass > self.bass_prev + 0.02", "rising = True"),
     "music vu: ignores level": ("evision_rgb/effects.py",
         "level = float(np.mean(self.disp)) * 1.05", "level = 1.05"),
+    "automation: indicator hidden by night dimming": ("evision_rgb/automation.py",
+        "            for i, rgb in self._indicators():\n                out[i] = rgb\n            out *= self._power_factor()",
+        "            out *= self._power_factor()\n            for i, rgb in self._indicators():\n                out[i] = rgb * self._night_factor()"),
+    "automation: night window ignores midnight wrap": ("evision_rgb/automation.py",
+        "inside = s <= cur < e if s <= e else (cur >= s or cur < e)", "inside = s <= cur < e"),
+    "automation: flashes never expire": ("evision_rgb/automation.py",
+        "self.flashes = [f for f in self.flashes if t - f[\"t0\"] < f[\"n\"] * f[\"period\"]]", "pass"),
+    "automation: stops the user's own live effect when it ends": ("evision_rgb/server.py",
+        "if eng.effect is not None and eng.effect.name == \"mirror\":", "if eng.effect is not None:"),
+    "automation: never hands the keyboard back": ("evision_rgb/server.py",
+        "                            eng.stop()\n                        self.auto_base = False",
+        "                            pass\n                        self.auto_base = False"),
+    "timer: fills right to left": ("evision_rgb/automation.py",
+        "lit = NUMBER_ROW[pos <= prog + 1e-9]", "lit = NUMBER_ROW[(1 - pos) <= prog + 1e-9]"),
 }
 
 failed_to_catch = []

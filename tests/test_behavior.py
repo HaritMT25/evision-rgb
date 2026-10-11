@@ -236,7 +236,10 @@ class ServerAPI(unittest.TestCase):
             self.addCleanup(setattr, st, attr, getattr(st, attr))
             setattr(st, attr, val)
         from evision_rgb.server import Controller, build_server
-        self.ctl = Controller()
+        import datetime as _dt
+        neutral = {"caps": lambda: False, "mic_muted": lambda: False, "idle": lambda: 0.0,
+                   "locked": lambda: False, "now": lambda: _dt.datetime(2026, 1, 1, 12)}
+        self.ctl = Controller(probes=neutral)  # never depend on the real PC's Caps Lock / lock state
         self._writes_at_start = len(self.kb.writes)
         self.httpd = build_server(self.ctl, 0)
         self.port = self.httpd.server_address[1]
@@ -245,8 +248,7 @@ class ServerAPI(unittest.TestCase):
 
     def _shutdown(self):
         self.httpd.shutdown()
-        self.ctl.stop_apps()
-        self.ctl.engine.close()
+        self.ctl.close()
 
     def call(self, path, body=None):
         data = None if body is None else json.dumps(body).encode()
@@ -346,7 +348,7 @@ class ServerAPI(unittest.TestCase):
         with open(path, "rb") as f:
             original = f.read()
         self.call("/effect", {"mode": "breath", "color": "ffffff"})
-        Controller(self.ctl.engine)  # a second start of the app
+        Controller(self.ctl.engine, probes=self.ctl.automation.probes)._auto_stop.set()  # a second start
         with open(path, "rb") as f:
             self.assertEqual(f.read(), original)
 

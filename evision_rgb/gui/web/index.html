@@ -29,6 +29,8 @@
         <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Custom Keys</button>
       <button data-tab="live">
         <svg viewBox="0 0 24 24"><path d="M3 12h3l3-8 4 16 3-8h5"/></svg>Live Effects</button>
+      <button data-tab="auto">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/></svg>Automation</button>
       <button data-tab="apps">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg>App Profiles</button>
       <button data-tab="settings">
@@ -124,6 +126,46 @@
           <button class="btn primary" id="liveStop">Stop live (back to keyboard effect)</button>
         </div>
         <div class="cards" id="cards"></div>
+      </div>
+
+      <!-- automation -->
+      <div class="tab" id="tab-auto">
+        <div class="grid2">
+          <div>
+            <h2>Indicators</h2>
+            <div class="row" style="margin-bottom:10px"><label class="toggle"><input type="checkbox" data-a="caps_lock.enabled"><span></span></label>
+              Caps Lock lights <select class="inp" style="width:auto" data-a="caps_lock.key"></select>
+              <input type="color" data-a="caps_lock.color"></div>
+            <div class="row" style="margin-bottom:18px"><label class="toggle"><input type="checkbox" data-a="mic_mute.enabled"><span></span></label>
+              Microphone muted lights <select class="inp" style="width:auto" data-a="mic_mute.key"></select>
+              <input type="color" data-a="mic_mute.color"></div>
+            <h2>Timer / pomodoro</h2>
+            <div class="row" style="margin-bottom:6px">
+              <input class="inp" style="width:80px" type="number" min="1" max="600" value="25" id="tMin"> min
+              <input class="inp" style="width:160px" type="text" placeholder="label (optional)" id="tLabel">
+              <button class="btn primary" id="tStart">Start</button><button class="btn" id="tCancel">Cancel</button>
+            </div>
+            <div class="hint" id="tStatus">The number row fills up as time passes; the board flashes when it's done.</div>
+            <h2 style="margin-top:18px">Notifications</h2>
+            <div class="row"><input type="color" id="nColor" value="#ff3000"><button class="btn" id="nTest">Test flash</button></div>
+            <p class="hint">Any script, CI job or AI agent can flash the keyboard: <code>POST http://127.0.0.1:8820/notify</code>
+              <code>{"color":"ff0000","flashes":3}</code>, or the MCP tool <code>notify</code>.</p>
+          </div>
+          <div>
+            <h2>Power &amp; schedule</h2>
+            <div class="row" style="margin-bottom:8px"><label class="toggle"><input type="checkbox" data-a="lock.enabled"><span></span></label>
+              When the PC is locked, set lights to <input type="range" style="width:120px" min="0" max="1" step="0.05" data-a="lock.brightness"><output data-o="lock.brightness"></output></div>
+            <div class="row" style="margin-bottom:8px"><label class="toggle"><input type="checkbox" data-a="idle.enabled"><span></span></label>
+              After <input class="inp" style="width:64px" type="number" min="1" max="240" data-a="idle.after_min"> min idle, lights to
+              <input type="range" style="width:120px" min="0" max="1" step="0.05" data-a="idle.brightness"><output data-o="idle.brightness"></output></div>
+            <div class="row" style="margin-bottom:8px"><label class="toggle"><input type="checkbox" data-a="night.enabled"><span></span></label>
+              Night mode from <input class="inp" style="width:auto" type="time" data-a="night.start"> to
+              <input class="inp" style="width:auto" type="time" data-a="night.end"></div>
+            <div class="row" style="margin-left:52px">brightness <input type="range" style="width:160px" min="0.05" max="1" step="0.05" data-a="night.brightness"><output data-o="night.brightness"></output></div>
+            <p class="hint" style="margin-top:14px">While an indicator, timer or dimming is active on top of a built-in effect, the app shows a live
+              copy of your stored colours (built-in animations pause) and hands the keyboard back afterwards.</p>
+          </div>
+        </div>
       </div>
 
       <!-- app profiles -->

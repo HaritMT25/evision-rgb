@@ -14,7 +14,7 @@ requires-python = ">=3.10"
 dependencies = ["hidapi", "numpy", "psutil"]
 
 [project.optional-dependencies]
-effects = ["pynput", "soundcard"]
+effects = ["pynput", "soundcard", "pycaw; sys_platform == 'win32'"]
 mcp = ["mcp"]
 gui = ["pywebview", "pystray", "pillow"]
 dev = ["pyinstaller"]

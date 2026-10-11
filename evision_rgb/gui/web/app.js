@@ -168,6 +168,7 @@ async function statusLoop() {
     $$(".card").forEach(c => c.classList.toggle("on", S.status.effect === c.dataset.effect && !S.status.apps));
     const err = S.status.stream_error || S.status.audio_error;
     if (err) $("#statusText").textContent += " · " + err.slice(0, 60);
+    renderTimer();
     if (S.status.apps) $("#appsNow").textContent = `now: ${S.status.apps.foreground} → ${S.status.apps.rule}`;
     else $("#appsNow").textContent = "";
   } catch (e) {
@@ -375,6 +376,46 @@ function initLive() {
   $("#liveStop").onclick = () => safe(() => api("/stop", {}), "Back to the keyboard's own effect").then(() => (S.lastFrameAt = 0));
 }
 
+// ------------------------------------------------------------------ automation tab
+function getPath(o, path) { return path.split(".").reduce((a, k) => a && a[k], o); }
+async function initAutomation() {
+  const cfg = await api("/automation");
+  const keyOpts = S.layout.keys.map(k => `<option value="${k.name}">${k.label}</option>`).join("");
+  $$("#tab-auto select[data-a]").forEach(s => s.innerHTML = keyOpts);
+  const fill = c => {
+    for (const el of $$("#tab-auto [data-a]")) {
+      const v = getPath(c, el.dataset.a);
+      if (el.type === "checkbox") el.checked = !!v;
+      else if (el.type === "color") el.value = "#" + v;
+      else el.value = v;
+      const o = $(`#tab-auto [data-o="${el.dataset.a}"]`); if (o) o.textContent = Math.round(v * 100) + "%";
+    }
+  };
+  fill(cfg);
+  const save = debounce(async () => {
+    const patch = {};
+    for (const el of $$("#tab-auto [data-a]")) {
+      const [sec, key] = el.dataset.a.split(".");
+      let v = el.type === "checkbox" ? el.checked : el.type === "color" ? hex(el.value)
+        : (el.type === "range" || el.type === "number") ? +el.value : el.value;
+      (patch[sec] = patch[sec] || {})[key] = v;
+    }
+    try { fill(await api("/automation", patch)); } catch (e) { toast(e.message, true); }
+  }, 300);
+  $$("#tab-auto [data-a]").forEach(el => el.addEventListener("input", () => {
+    const o = $(`#tab-auto [data-o="${el.dataset.a}"]`); if (o) o.textContent = Math.round(el.value * 100) + "%";
+    save();
+  }));
+  $("#tStart").onclick = () => safe(() => api("/timer", { minutes: +$("#tMin").value, label: $("#tLabel").value }), "Timer started");
+  $("#tCancel").onclick = () => safe(() => api("/timer", { cancel: true }), "Timer cancelled");
+  $("#nTest").onclick = () => safe(() => api("/notify", { color: hex($("#nColor").value), flashes: 3, period: 0.35 }));
+}
+function renderTimer() {
+  const t = S.status && S.status.timer;
+  $("#tStatus").textContent = t ? `${t.label ? t.label + ": " : ""}${Math.floor(t.remaining_s / 60)}:${String(Math.floor(t.remaining_s % 60)).padStart(2, "0")} left`
+    : "The number row fills up as time passes; the board flashes when it's done.";
+}
+
 // ------------------------------------------------------------------ app profiles tab
 function effectOptions(sel) {
   return [`<option value="${NO_EFFECT}" ${!sel ? "selected" : ""}>Keyboard's own effect</option>`]
@@ -513,7 +554,7 @@ function showTab(t) {
 }
 async function boot() {
   [S.layout, S.modes, S.settings] = await Promise.all([fetch("ui/layout.json").then(r => r.json()), api("/modes"), api("/settings")]);
-  buildBoard(); initLight(); initCustom(); initLive(); initApps(); initProfiles();
+  buildBoard(); initLight(); initCustom(); initLive(); initApps(); initProfiles(); await initAutomation();
   await initSettings();
   $$("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#conflictPill").onclick = () => showTab("settings");

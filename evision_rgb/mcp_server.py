@@ -118,6 +118,25 @@ def clear_live_keys() -> dict:
 
 
 @mcp.tool()
+def notify(color: str = "ffffff", keys: list[str] | None = None, flashes: int = 3, period: float = 0.35) -> dict:
+    """Flash the keyboard (or only `keys`) to get the user's attention, e.g. when a long task finishes.
+    Works on top of any effect and hands the keyboard back afterwards."""
+    return call("/notify", {"color": color, "keys": keys, "flashes": flashes, "period": period})
+
+
+@mcp.tool()
+def start_timer(minutes: float, label: str = "") -> dict:
+    """Show a countdown on the number row (fills left to right); the board flashes when time is up."""
+    return call("/timer", {"minutes": minutes, "label": label})
+
+
+@mcp.tool()
+def cancel_timer() -> dict:
+    """Cancel the running number-row timer."""
+    return call("/timer", {"cancel": True})
+
+
+@mcp.tool()
 def stop_live() -> dict:
     """Stop live control; the keyboard returns to its stored hardware effect."""
     return call("/stop", {})

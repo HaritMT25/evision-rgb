@@ -10,6 +10,9 @@ POST /keys     {"colors": {"W": "ff0000", "A": null}}         (live per-key over
 POST /clear    {}  remove live overrides       POST /stop {}  end live mode (and app profiles)
 POST /apps     {"enabled": true, "default": {...}, "rules": [{"match": "code.exe", "effect": "reactive"}]}
 POST /settings {...partial settings...}        POST /autostart {"enabled": true}
+POST /notify   {"color": "ff0000", "keys": ["Esc"], "flashes": 3, "period": 0.35}   flash keys or the board
+POST /timer    {"minutes": 25, "label": "focus"} | {"cancel": true}                 number-row countdown
+GET|POST /automation  indicators (caps_lock, mic_mute), idle/lock dimming, night schedule
 POST /close_conflict {"pid": 123}              POST /restore {}  (restore pre-session backup)
 """
 from __future__ import annotations
@@ -40,16 +43,23 @@ def _hex(c) -> str:
 
 
 class Controller:
-    """Shared state: engine (live effects), app profiles, settings."""
+    """Shared state: engine (live effects), app profiles, automation, settings."""
 
-    def __init__(self, engine: Engine | None = None):
+    def __init__(self, engine: Engine | None = None, probes: dict | None = None, automation_hz: float = 10):
         self.engine = engine or Engine()
         self.kb = self.engine.kb
         self.lock = threading.RLock()
         self.apps = None
         self.settings = settings_mod.load()
+        from .automation import Automation
+        self.automation = Automation(self.settings.get("automation"), probes)
+        self.engine.post = self.automation.apply
+        self.auto_base = False  # True while a mirror was started only to show automation
+        self._auto_stop = threading.Event()
+        self._auto_hz = automation_hz
         self.show_cb = None  # set by the desktop app: bring its window to front
         self.backup_dir = self.ensure_backup()
+        threading.Thread(target=self._automation_loop, daemon=True).start()
 
     def ensure_backup(self) -> str:
         """On the very first start, save the keyboard's lighting before this app changes anything.
@@ -64,6 +74,35 @@ class Controller:
                 with open(os.path.join(d, name), "wb") as f:
                     f.write(data)
         return d
+
+    # -- automation: borrow the LEDs only while an indicator / flash / timer / dimming needs them
+    def _mirror_params(self) -> dict:
+        info = self.kb.info()
+        if info["mode_id"] == MODES["custom"]:
+            return {"colors": self.kb.get_custom(0)}
+        level = info["brightness"] / 4
+        return {"color": bytes(int(c * level) for c in bytes.fromhex(info["color"])).hex()}
+
+    def _automation_loop(self):
+        while not self._auto_stop.wait(1.0 / self._auto_hz):
+            try:
+                need = self.automation.active()
+                with self.lock:
+                    eng = self.engine
+                    if need and eng.effect is None:
+                        eng.run("mirror", **self._mirror_params())
+                        self.auto_base = True
+                    elif not need and self.auto_base:
+                        if eng.effect is not None and eng.effect.name == "mirror":  # never stop the user's effect
+                            eng.stop()
+                        self.auto_base = False
+            except Exception as e:  # keyboard unplugged etc.: keep trying
+                print("automation:", repr(e))
+
+    def close(self):
+        self._auto_stop.set()
+        self.stop_apps()
+        self.engine.close()
 
     # -- app profiles
     def stop_apps(self):
@@ -148,6 +187,7 @@ def make_handler(ctl: Controller):
                 with ctl.lock:
                     if u.path == "/status":
                         st = engine.status()
+                        st["timer"] = ctl.automation.timer_status()
                         st["apps"] = ({"foreground": ctl.apps.app,
                                        "rule": (ctl.apps.current or {}).get("match", "default")}
                                       if ctl.apps else None)
@@ -167,6 +207,8 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.kb.get_custom(int(q.get("colorset", ["0"])[0])))
                     if u.path == "/settings":
                         return self._send(200, ctl.settings)
+                    if u.path == "/automation":
+                        return self._send(200, ctl.automation.cfg)
                     if u.path == "/conflicts":
                         return self._send(200, system.conflicts())
                     if u.path == "/foreground":
@@ -186,6 +228,20 @@ def make_handler(ctl: Controller):
                 req = json.loads(self.rfile.read(n) or b"{}")
                 p = self.path
                 with ctl.lock:
+                    if p == "/notify":
+                        ctl.automation.notify(req.get("color", "ffffff"), req.get("keys"),
+                                              req.get("flashes", 3), req.get("period", 0.35))
+                        return self._send(200, {"ok": True})
+                    if p == "/timer":
+                        if req.get("cancel"):
+                            ctl.automation.cancel_timer()
+                        else:
+                            ctl.automation.start_timer(float(req["minutes"]), req.get("label", ""))
+                        return self._send(200, {"timer": ctl.automation.timer_status()})
+                    if p == "/automation":
+                        cfg = ctl.automation.configure(req)
+                        ctl.update_settings({"automation": cfg})
+                        return self._send(200, cfg)
                     if p == "/effect":
                         ctl.kb.apply_fields(bytearray(CONFIG_LEN), **req)  # validate before touching the stream
                         ctl.stop_apps()
@@ -281,5 +337,4 @@ def serve(port: int = DEFAULT_PORT):
     except KeyboardInterrupt:
         pass
     finally:
-        ctl.stop_apps()
-        ctl.engine.close()
+        ctl.close()
