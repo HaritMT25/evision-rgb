@@ -57,6 +57,7 @@ class Controller:
         self.settings = settings_mod.load()
         from .automation import Automation
         self.automation = Automation(self.settings.get("automation"), probes)
+        emulate.set_time_scale(self.settings.get("fw_time_scale", 1.0))
         self.engine.post = self.automation.apply
         self.auto_base = False  # True while a mirror was started only to show automation
         self._auto_stop = threading.Event()
@@ -145,6 +146,8 @@ class Controller:
 
     def close(self):
         self._auto_stop.set()
+        if self._emu[1] is not None:
+            self._emu[1].stop()
         self._sync_key_hook_off()
         self.stop_apps()
         self.engine.close()
@@ -169,6 +172,9 @@ class Controller:
 
     # -- settings
     def update_settings(self, patch: dict) -> dict:
+        if "fw_time_scale" in patch:
+            emulate.set_time_scale(float(patch["fw_time_scale"]))
+            self._emu = (None, self._emu[1], 0.0)  # rebuild the preview emulator with the new timing
         self.settings.update(patch)
         return settings_mod.save(self.settings)
 
@@ -197,7 +203,13 @@ class Controller:
             return {"source": "custom", "mode": info["mode"], "colors": self.kb.get_custom(0)}
         key = tuple(info[k] for k in ("mode_id", "brightness", "speed", "direction", "random", "color", "variant"))
         if self._emu[0] != key:
-            self._emu = (key, emulate.emulator(info), time.monotonic())
+            old = self._emu[1]
+            if old is not None:
+                old.stop()  # release its key hook
+            emu = emulate.emulator(info)
+            if info["mode_id"] in emulate.REACTIVE_MODES:
+                emu.start()  # the preview must see key presses to mirror reactive effects
+            self._emu = (key, emu, time.monotonic())
         _, emu, t0 = self._emu
         colors = emu.render(time.monotonic() - t0)
         return {"source": "hardware", "mode": info["mode"], "color": info["color"], "animated": info["mode"] != "normal",

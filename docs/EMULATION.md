@@ -23,7 +23,7 @@ Please open an issue describing what the real effect does if one looks wrong.
 | 0E | Cartoon | cluster around H/J/K grows, fades, returns | **observed** |
 | 0F | Rain | drops falling down the columns with a trail | **observed** |
 | 10 | Scan | bar scanning back and forth | approximation |
-| 11 | Surmount | static; byte 18 = style: 0 light pink, 1-2 presets (shades unconfirmed), 3 = chosen colour | **observed** (partly) |
+| 11 | Surmount | fades in to a solid preset colour; byte 18 = style 0 rose, 1 yellow, 2 green, 3 cyan (chosen colour ignored) | **firmware** |
 | 12 | Speed | colour pulses enter from one edge (direction) and ripple across, gaps between | **observed** |
 | 14 | Custom | stored per-key layout | exact |
 

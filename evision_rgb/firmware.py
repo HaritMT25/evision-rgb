@@ -10,7 +10,9 @@ Firmware facts used here (from static analysis, see docs/FIRMWARE.md):
 - CODE 0xA700 + 0x200*area: custom colours (area chosen by config byte 25)
 - XDATA 0x066D: LED frame, 128 x [0xFF, R, G, B], brightness already applied
 - lighting task 0x8B5C (dispatch table 0x8C13); tick routine 0x947F advances the effect
-  counter every 2 timer interrupts; Timer1 = 24 MHz/12, reload 800 -> 400 us -> 1 tick = 0.8 ms
+  counter every 2 timer interrupts. Timer1 ISR body = 0xE36E (reloads TH1:TL1 for 800 counts and
+  advances the ISR-driven counters). CH555 datasheet: CLOCK_CFG=6 -> Fsys = Fpll/3 = 32 MHz,
+  Timer1 = Fsys/12 -> 300 us per interrupt -> 1 effect tick = 0.6 ms (scaled by `time_scale`)
 - gates: XDATA 0x05C6 = USB configured, 0x0A5F >= 30 start-up delay, 0x0A4B = power-on show
 """
 from __future__ import annotations
@@ -28,7 +30,9 @@ INIT_CALLS = (0x2FE2, 0xE587, 0xDC37, 0xEEF3, 0xE16D, 0xEF80)
 TICK_FN, LIGHT_FN = 0x947F, 0x8B5C
 POST_CALL = 0x8CB1          # LCALL 0xDCD7 ; LCALL 0xED4D (hardware output stage, not needed here)
 CFG, MODE, CUSTOM_BASE, FRAME = 0x0A64, 0x0A65, 0xA700, 0x066D
-TICK_S = 0.0008
+ISR_FN = 0xE36E             # Timer1 interrupt body (plain function ending in RET)
+ISR_S = 800 * 12 / 32e6     # 300 us
+HUE_TABLE = 0x09B5          # per-key hue counters (Flowers etc.); uninitialised RAM on real hardware
 CAPS_SIG = bytes.fromhex("aa5500000d805000020000")
 
 
@@ -66,7 +70,7 @@ def find_firmware(caps: bytes | None = None, search: list[str] | None = None) ->
 class FirmwareLighting:
     """The firmware's lighting engine running in an 8051 interpreter."""
 
-    def __init__(self, image: bytes, fast: bool = True):
+    def __init__(self, image: bytes, fast: bool = True, time_scale: float = 1.0, seed: int = 0x5EED):
         if fast:
             from .fw8051_fast import FastCPU
             cpu = FastCPU(image)
@@ -80,8 +84,14 @@ class FirmwareLighting:
         cpu.xdata[0x05C6] = 1     # USB configured
         cpu.xdata[0x0A5F] = 30    # start-up delay elapsed
         cpu.xdata[0x0A4B] = 0     # no power-on show
+        # external RAM is not cleared by the C start-up code, so on real hardware tables like the
+        # per-key hue counters start with power-up garbage; emulate that deterministically
+        rng = np.random.default_rng(seed)
+        cpu.xdata[HUE_TABLE:HUE_TABLE + 128] = [int(v) for v in rng.integers(0, 0xC0, 128)]
         self.cpu = cpu
+        self.time_scale = time_scale
         self.ticks = 0
+        self._carry = 0.0
 
     def configure(self, config: bytes):
         """Apply a host-format config block (bytes 0.. of command 0x06 / 0x05)."""
@@ -92,12 +102,16 @@ class FirmwareLighting:
         self.cpu.code[a:a + 384] = list(frame)
 
     def advance(self, seconds: float):
-        n = max(1, round(seconds / TICK_S))
-        x = self.cpu.xdata
+        """Advance emulated time: one Timer1 interrupt (ISR body) + one main-loop pass per period."""
+        period = ISR_S * self.time_scale
+        self._carry += seconds
+        n = int(self._carry / period)
+        self._carry -= n * period
+        cpu = self.cpu
         for _ in range(n):
-            x[0x0956] = 2
-            self.cpu.call(TICK_FN)
-            self.cpu.call(LIGHT_FN)
+            cpu.call(ISR_FN)
+            cpu.call(TICK_FN)
+            cpu.call(LIGHT_FN)
         self.ticks += n
 
     def frame(self) -> np.ndarray:

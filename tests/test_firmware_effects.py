@@ -106,11 +106,16 @@ class RealFirmware(unittest.TestCase):
             fl = self.engine(17, variant=variant)
             cfg = bytearray(CFG); cfg[1] = 17; cfg[18] = variant; cfg[6:9] = bytes.fromhex(rgb)
             fl.configure(bytes(cfg))
-            return self.run_frames(fl, 1.0)[-1][slot("W")]
+            return self.run_frames(fl, 3.5)[-1][slot("W")]  # fades in over ~3 s
         for v in range(4):
             self.assertTrue(np.allclose(colour(v, "ff2000"), colour(v, "00ffff")), f"style {v}")
-        self.assertGreater(colour(0, "ff2000")[2], 0.4, "style 1 is pink/magenta")
-        self.assertGreater(colour(2, "ff2000")[1], 0.6, "style 3 is green")
+        # settles to preset colours (user saw style 4 = a cyan block even with pink selected)
+        r, g, b = colour(3, "ff2000")
+        self.assertTrue(g > 0.6 and b > 0.6 and r < 0.1, "style 4 is cyan")
+        r, g, b = colour(1, "ff2000")
+        self.assertTrue(r > 0.6 and g > 0.6 and b < 0.3, "style 2 is yellow")
+        r, g, b = colour(2, "ff2000")
+        self.assertTrue(g > 0.6 and r < 0.4, "style 3 is green")
 
 if __name__ == "__main__":
     unittest.main()

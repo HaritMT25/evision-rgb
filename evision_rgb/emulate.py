@@ -221,12 +221,23 @@ def firmware_base():
                 from .firmware import FirmwareLighting, find_firmware
                 img = find_firmware(_FW["caps"])
                 if img is not None:
-                    _FW["base"] = FirmwareLighting(img)
+                    _FW["base"] = FirmwareLighting(img, time_scale=_FW.get("time_scale", 1.0))
                     _FW["source"] = "AJAZZ updater"
             except Exception as e:  # numba/pefile missing, corrupt updater...
                 _FW["base"] = None
                 _FW["source"] = f"unavailable: {e!r}"
         return _FW["base"]
+
+
+REACTIVE_MODES = {7, 8, 9, 16, 17, 18, 20}   # modes whose firmware handler reacts to key presses
+
+
+def set_time_scale(scale: float):
+    """Calibration: stretch emulated firmware time (1.0 = datasheet timing)."""
+    with _FW_LOCK:
+        _FW["time_scale"] = float(scale)
+        if _FW["base"] is not None:
+            _FW["base"].time_scale = float(scale)
 
 
 def firmware_ready():

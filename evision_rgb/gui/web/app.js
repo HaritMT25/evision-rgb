@@ -255,7 +255,6 @@ function initLight() {
   buildPalette($("#hwPalette"), c => {
     S.hwBrushColor = c; $("#hwChip").style.background = "#" + c; $("#hwHex").textContent = "#" + c;
     $("#hwRandom").checked = false;  // choosing a colour means "use this colour" (random overrides it)
-    if (+$("#hwMode").value === 17) { $$("#hwVariant button").forEach(x => x.classList.toggle("on", x.dataset.v === "3")); }
     $("#hwPalette")._mark(); pushEffect();
   }, () => S.hwBrushColor);
 }
