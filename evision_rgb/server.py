@@ -52,6 +52,7 @@ from . import heatmap as heatmap_mod  # registers 'heatmap'
 from . import media  # registers 'nowplaying' (album colours)
 from . import games  # registers 'cs2' and 'dota2' (game lighting)
 from . import openrgb  # registers 'openrgb' (colours from OpenRGB clients)
+from . import scenes  # registers 'fire', 'ocean', 'twinkle', 'matrix'
 from . import profiles
 from .effects import EFFECTS, GAMMA, Engine, NAMES
 from . import __version__

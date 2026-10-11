@@ -22,7 +22,8 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
   (see [docs/FIRMWARE.md](docs/FIRMWARE.md)).
 - **Per-key colours**: paint keys in the app with undo/redo and save them to the keyboard. They keep working with the app closed.
 - **Live effects** (~60 fps, rendered by the PC): rainbow, breathing, gradient, typing ripples, **music visualiser**
-  (bars, VU meter, beat flash, bass ripples, pulse), **screen ambient**, **system monitor** (CPU/RAM bars), typing heatmap.
+  (bars, VU meter, beat flash, bass ripples, pulse), **screen ambient**, **system monitor** (CPU/RAM bars), typing heatmap,
+  and classics after FastLED's examples: **fire**, **ocean** waves, **twinkling** stars and **digital rain**.
 - **Album colours**: the keys take the colours of the cover of whatever is playing (Spotify, YouTube in a browser, any
   player in Windows' media controls), drifting across the board, painted as the cover itself, or as one colour.
   No account or API key. A macro pad's play/pause key shows the cover and whether it is playing.

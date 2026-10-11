@@ -4,4 +4,4 @@ from .layout import KEYS
 from .protocol import MODES, AK820, ProtocolError
 
 __all__ = ["Keyboard", "Stream", "KEYS", "MODES", "AK820", "ProtocolError", "parse_color", "frame_from"]
-__version__ = "0.5.0"
+__version__ = "0.6.0"

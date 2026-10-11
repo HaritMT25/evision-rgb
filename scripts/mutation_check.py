@@ -326,6 +326,19 @@ MUTANTS = {
         '            self.set_hardware(**fields)\n            self._ext_dismissed = True', '            self._ext_dismissed = True'),
     'openrgb: loading a profile does nothing': ('evision_rgb/server.py',
         '        p = self.find_profile(name)\n        if p is not None:', '        p = self.find_profile(name)\n        if False:'),
+    # -- classic effects
+    'scenes: fire heat never rises': ('evision_rgb/scenes.py',
+        '        h[:, 1:] = 0.55 * h[:, 1:] + 0.45 * h[:, :-1]\n', ''),
+    'scenes: fire turns blue before yellow': ('evision_rgb/scenes.py',
+        'np.clip(3 * heat - 1, 0, 1), np.clip(3 * heat - 2, 0, 1)]', 'np.clip(3 * heat - 2, 0, 1), np.clip(3 * heat - 1, 0, 1)]'),
+    'scenes: twinkles switch on and off without fading': ('evision_rgb/scenes.py',
+        '        v = np.where(x < 1, np.sin(np.pi * np.minimum(x, 1)) ** 2, 0.0)', '        v = np.where(x < 1, 1.0, 0.0)'),
+    'scenes: twinkle ignores its colours': ('evision_rgb/scenes.py',
+        '        colour = self.palette[(self.pick', '        colour = np.ones(3) + 0 * self.palette[(self.pick'),
+    'scenes: digital rain falls upwards': ('evision_rgb/scenes.py',
+        '            d[1] += d[2] * self.speed', '            d[1] -= d[2] * self.speed'),
+    'scenes: the same seed gives a different show': ('evision_rgb/scenes.py',
+        '        self.rng = np.random.default_rng(self.seed)', '        self.rng = np.random.default_rng()'),
     # -- releases
     'release: a failing self-test check still passes the build': ('evision_rgb/gui/app.py',
         '    ok = all(c["ok"] for c in checks.values())', '    ok = True'),
@@ -345,7 +358,8 @@ HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_b
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
          "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
          "release:": ["test_release"], "usb:": ["test_feature_reconnect"],
-         "faint keys:": ["test_behavior"], "openrgb:": ["test_feature_openrgb"]}
+         "faint keys:": ["test_behavior"], "openrgb:": ["test_feature_openrgb"],
+         "scenes:": ["test_feature_scenes"]}
 
 
 def coarse_timers() -> bool:

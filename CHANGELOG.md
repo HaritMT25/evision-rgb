@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 (2026-10-11)
+- New live effects after FastLED's classic examples (MIT): **Fire** (a flame in every column, after Fire2012),
+  **Ocean** (blue-green waves with whitecaps, after Pacifica), **Twinkle** (keys twinkling like stars, after
+  TwinkleFox) and **Digital rain**. They work as layers too.
+
 ## 0.5.0 (2026-10-11)
 - **Fix: the keyboard reconnects by itself** after it is replugged or its USB connection is reset (sleep, power
   saving). Before, the app kept sending into a dead connection until it was restarted, so the keyboard stayed on its

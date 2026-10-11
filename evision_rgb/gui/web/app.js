@@ -414,6 +414,17 @@ const EFFECTS = [
   { id: "ambient", name: "Screen ambient", desc: "Keys take the colours of your screen — like a mini Ambilight.", p: [
     ["mode", "Mode", "select", ["map", "average"], "map"], ["saturation", "Vividness", "range", 1, 2.5, 0.1, 1.4],
     ["smooth", "Smoothing (s)", "range", 0, 1, 0.05, 0.25], ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1]] },
+  { id: "fire", name: "Fire", desc: "A flame in every column, rising from the bottom row.", p: [
+    ["cooling", "Cooling", "range", 0, 1, 0.05, 0.55], ["sparking", "Sparks", "range", 0, 1, 0.05, 0.5],
+    ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1]] },
+  { id: "ocean", name: "Ocean", desc: "Blue-green waves rolling across the keys, whitecaps where they meet.", p: [
+    ["speed", "Speed", "range", 0.1, 3, 0.1, 1], ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1]] },
+  { id: "twinkle", name: "Twinkle", desc: "Keys light up and fade one by one, like stars.", p: [
+    ["density", "How many", "range", 0.05, 1, 0.05, 0.4], ["speed", "Speed", "range", 0.1, 3, 0.1, 1],
+    ["background", "Night sky", "color", "000000"], ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1]] },
+  { id: "matrix", name: "Digital rain", desc: "Green trails falling down the keys.", p: [
+    ["density", "Rain", "range", 0.02, 1, 0.02, 0.15], ["speed", "Speed", "range", 0.2, 3, 0.1, 1],
+    ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1]] },
   { id: "sysmon", name: "System monitor", desc: "F-row = CPU load, number row = RAM use; Esc pulses above 90 % CPU.", p: [
     ["base", "Background", "color", "000010"]] },
   { id: "breathing", name: "Breathing", desc: "Whole board fades in and out.", p: [

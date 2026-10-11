@@ -29,8 +29,8 @@ def _val(v: str):
 
 def load_effects() -> dict:
     """Every live effect the app knows: some modules add theirs to EFFECTS when they are imported."""
-    from . import emulate, games, heatmap, media, openrgb  # noqa: F401  (emulate, keyboard, heatmap, nowplaying, cs2,
-    #                                                            dota2, openrgb)
+    from . import emulate, games, heatmap, media, openrgb, scenes  # noqa: F401  (emulate, keyboard, heatmap, nowplaying,
+    #                                                                    cs2, dota2, openrgb, fire, ocean, twinkle, matrix)
     from .effects import EFFECTS
     return EFFECTS
 
