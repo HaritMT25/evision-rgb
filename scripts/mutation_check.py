@@ -254,13 +254,25 @@ MUTANTS = {
         '            if False:\n                cover = (s["id"], s["playing"])'),
     'pad: the play key is not redrawn for a new track or pause': ('evision_rgb/macropad.py',
         '                cover = (s["id"], s["playing"])', '                cover = (0, True)'),
+    # -- releases
+    'release: a failing self-test check still passes the build': ('evision_rgb/gui/app.py',
+        '    ok = all(c["ok"] for c in checks.values())', '    ok = True'),
+    'release: notes without the install steps': ('scripts/release_notes.py',
+        '    return section(version) + "\\n" + INSTALL.format(v=version)', '    return section(version)'),
+    'release: no note on replacing the LGPL parts': ('scripts/third_party_notices.py',
+        '''             "pynput and pystray are under the GNU LGPL v3. They are bundled unmodified; their source is at",
+             "https://github.com/moses-palmer/pynput and https://github.com/moses-palmer/pystray. To use a modified",
+             "version, rebuild the app from its source (https://github.com/HaritMT25/evision-rgb) with",
+             "scripts/build_exe.sh after installing yours.", "",
+''', ''),
 }
 
 # the spec module of each feature runs first for its mutants (by mutant-name prefix)
 HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_battery"], "battery:": ["test_feature_battery"],
          "album:": ["test_feature_nowplaying"], "pad: the play key": ["test_feature_nowplaying"], "pad": ["test_feature_macropad"],
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
-         "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"]}
+         "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
+         "release:": ["test_release"]}
 
 
 def hint(name):

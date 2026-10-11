@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evision-rgb"
-version = "0.3.0"
+version = "0.4.0"
 description = "Open-source RGB control for EVision-based keyboards (AJAZZ AK820 and other USB 320F devices) and AJAZZ AKP macro pads: per-key lighting, layered live effects, music sync, shareable profiles, desktop app, HTTP API and MCP server"
 readme = "README.md"
 license = "MIT"
@@ -21,6 +21,8 @@ media = ["pillow", "winrt-runtime; sys_platform == 'win32'", "winrt-Windows.Foun
          "winrt-Windows.Foundation.Collections; sys_platform == 'win32'",
          "winrt-Windows.Media.Control; sys_platform == 'win32'", "winrt-Windows.Storage.Streams; sys_platform == 'win32'"]
 gui = ["pywebview", "pystray", "pillow", "evision-rgb[media]"]
+emulation = ["numba", "pefile"]  # exact preview of the built-in effects (runs the keyboard's own firmware code)
+app = ["evision-rgb[gui,effects,pads,media,emulation]"]  # everything the desktop app bundles
 dev = ["pyinstaller"]
 
 [project.scripts]

@@ -3,7 +3,7 @@
     set AK820_HW=1 && .venv\\Scripts\\python -m unittest discover -s tests -p "test_hardware.py" -v
 
 These confirm the assumptions the simulator (fake_device.py) is built on. Visual behaviour
-(flicker, what the LEDs show) still needs human eyes; see PROGRESS_LOG.md for those confirmations.
+(flicker, what the LEDs show) still needs human eyes; docs/PROTOCOL.md lists what was confirmed on hardware.
 """
 import os
 import time

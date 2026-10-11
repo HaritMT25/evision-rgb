@@ -2,6 +2,7 @@
 
   EVision RGB.exe              open the window (or bring the running instance to front)
   EVision RGB.exe --background start in the tray only (used for "start with Windows")
+  EVision RGB.exe --selftest report.json   check the built app without touching any device (release builds)
 """
 from __future__ import annotations
 
@@ -228,11 +229,95 @@ class App:
             self.quit()
 
 
+SELFTEST_MODULES = ("evision_rgb.server", "evision_rgb.macropad", "evision_rgb.media", "evision_rgb.profiles",
+                    "evision_rgb.automation", "hid", "webview", "pystray", "PIL", "pynput.keyboard", "soundcard",
+                    "numba", "pefile", "comtypes", "pycaw.pycaw", "winrt.windows.media.control",
+                    "winrt.windows.storage.streams")
+
+
+def selftest(path: str) -> int:
+    """Check a built app without touching any keyboard or pad: every bundled part loads and works. Writes a
+    JSON report to `path` (a windowed exe has no console); returns the exit code (0 = everything works)."""
+    import importlib
+    import platform
+
+    import numpy as np
+    checks = {}
+
+    def check(name, fn):
+        try:
+            checks[name] = {"ok": True, "info": fn()}
+        except Exception as e:  # noqa: BLE001 - every failure goes into the report
+            checks[name] = {"ok": False, "error": repr(e)}
+
+    def modules():
+        failed = {}
+
+        def load(n):  # each on its own thread, as the app does: COM libraries each set up their own apartment
+            try:
+                importlib.import_module(n)
+            except Exception as e:  # noqa: BLE001
+                failed[n] = repr(e)
+        for n in SELFTEST_MODULES:
+            t = threading.Thread(target=load, args=(n,))
+            t.start()
+            t.join(60)
+        if failed:
+            raise ImportError(f"not bundled or broken: {failed}")
+        return len(SELFTEST_MODULES)
+
+    def effects():
+        from ..effects import EFFECTS
+        done = []
+        for name, cls in sorted(EFFECTS.items()):
+            if name == "keyboard":  # the stored effect needs the app's keyboard connection
+                continue
+            np.asarray(cls().render(0.1), dtype=float)
+            done.append(name)
+        return done
+
+    def web():
+        from ..server import WEB
+        need = ("index.html", "app.js", "style.css", "history.js", "layout.json")
+        missing = [f for f in need if not os.path.isfile(os.path.join(WEB, f))]
+        if missing:
+            raise FileNotFoundError(missing)
+        return len(need)
+
+    def jit():
+        from numba import njit
+        if njit(lambda a: a * 2 + 1)(20) != 41:
+            raise AssertionError("numba computed a wrong result")
+        return "compiles"
+
+    def media_controls():
+        from ..media import windows_fetch
+        return "something is playing" if windows_fetch() else "nothing is playing"
+
+    def pad_images():
+        from ..streamdock import MODELS, encode, render_key
+        m = MODELS["akp03e-rev2"]
+        return len(encode(m, 0, render_key(m.keys[0].size, "Test", "202024", "🎵")))
+
+    for name, fn in (("modules", modules), ("live effects", effects), ("app window files", web), ("numba JIT", jit),
+                     ("media controls", media_controls), ("pad key images", pad_images)):
+        check(name, fn)
+    from .. import __version__
+    ok = all(c["ok"] for c in checks.values())
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ok": ok, "version": __version__, "python": platform.python_version(),
+                   "frozen": bool(getattr(sys, "frozen", False)), "checks": checks}, f, indent=1)
+    return 0 if ok else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="EVision RGB")
     ap.add_argument("--background", action="store_true", help="start in the tray (for autostart)")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--selftest", metavar="REPORT.json", help="check the app without touching any device, then exit")
     a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest(a.selftest)
 
     if _running(a.port):  # single instance: bring the existing one to the front
         try:

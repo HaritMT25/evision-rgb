@@ -144,7 +144,13 @@ try {
   await js(`$("#cRedo").click(); await T.wait(100);`);
   check("Redo button paints it again", await js(`return S.custom.Esc === "0000ff"`));
   await shot("custom");
-  await js(`$("#cDiscard").click(); await T.wait(500);`);
+  // editor colours the keyboard is not showing (no new frame comes for a still picture): leaving must redraw it
+  await js(`await api("/stop", {}); await T.wait(400); S.custom.Esc = "123456"; S.dirty = true; colorKeys(S.custom);
+            showTab("light"); await T.wait(400);`);
+  check("leaving the editor shows the keyboard's real colours again",
+    await js(`return S.keyEls.Esc.style.getPropertyValue("--c") === "#" + S.frame.colors.Esc`),
+    await js(`return S.keyEls.Esc.style.getPropertyValue("--c") + " vs " + S.frame.colors.Esc`));
+  await js(`showTab("custom"); await T.wait(500); $("#cDiscard").click(); await T.wait(500);`);
 
   // ---- macro pad tab (start the preview server with --pad akp03e-rev2 and pass --pad here to expect one)
   await js(`showTab("pad"); await T.wait(900);`);

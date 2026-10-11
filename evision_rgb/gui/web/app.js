@@ -151,11 +151,12 @@ function paintSelection() {
 }
 
 // preview: a 60 fps Server-Sent-Events stream mirrors the keyboard; polling is the fallback
+function editingCustom() { return S.tab === "custom" && (S.dirty || Object.keys(S.custom).length); }
 function showFrame(f) {
-  if (S.tab === "custom" && (S.dirty || Object.keys(S.custom).length)) return;  // editor shows local colours
+  S.frame = f;  // a still picture is sent only once: keep it to redraw after the editor and for the caption
+  if (editingCustom()) return;  // editor shows local colours
   colorKeys(f.colors);
   S.animated = !!f.animated;
-  S.frame = f;  // a still picture is sent once: the status loop keeps its caption current
   const now = Date.now();
   if (now - (S.captionAt || 0) > 250) { setCaption(f); S.captionAt = now; }
 }
@@ -1122,6 +1123,7 @@ function showTab(t) {
   S.lastFrameAt = 0;
   if (t === "custom" && !S.dirty) loadCustom().catch(() => { });
   if (t !== "custom") S.custom = S.dirty ? S.custom : {};
+  if (S.frame && !editingCustom()) { colorKeys(S.frame.colors); setCaption(S.frame); }  // no editor colours left behind
   if (t === "light") loadInfo().catch(() => { });
   if (t === "pad" && S.pad.st) padLoad().catch(() => { });
 }

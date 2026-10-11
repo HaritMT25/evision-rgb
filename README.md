@@ -52,14 +52,33 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
   programs on this PC, so web pages cannot drive it.
 - The app backs up the keyboard's lighting the first time it connects, and can restore it any time.
 
+## Screenshots
+| | |
+|---|---|
+| ![Layer editor: the keyboard's own effect with red WASD on top](docs/screenshots/layers.webp) | ![Album colours: the keys take the colours of the song's cover](docs/screenshots/album-colours.webp) |
+| ![Per-key colours](docs/screenshots/custom-keys.webp) | ![Macro pad keys and knobs](docs/screenshots/macro-pad.webp) |
+| ![Automation: indicators, battery saver, timer](docs/screenshots/automation.webp) | ![Built-in effects with the firmware-exact preview](docs/screenshots/built-in-effects.webp) |
+
+<sub>Taken against the keyboard and pad simulators with a pretend song (`node scripts/screenshots.mjs`).</sub>
+
+## Download (Windows)
+Get the app from **[Releases](https://github.com/HaritMT25/evision-rgb/releases)**: unzip
+`EVision-RGB-<version>-windows-x64.zip` anywhere and run `EVision RGB.exe`. No Python or AJAZZ software needed
+(Windows 10 or 11, 64-bit).
+
+Windows shows "Windows protected your PC" because the app is not code-signed: click **More info**, then
+**Run anyway**. Each download has a `.sha256` file to check it against (`Get-FileHash <zip>` in PowerShell). Every
+release is built by GitHub from this repository's source, and the built app checks itself before it is published.
+
 ## Install (from source, Windows)
 ```powershell
 git clone https://github.com/HaritMT25/evision-rgb && cd evision-rgb
 python -m venv .venv; .venv\Scripts\activate
-pip install -e ".[effects,mcp,gui]"    # gui includes "media" (now playing, Windows 10+)
+pip install -e ".[app,mcp]"    # app = everything the desktop app uses (gui, effects, pads, media, emulation)
 evision-rgb          # desktop app
 ```
-Build a standalone exe: `pip install -e ".[dev]"` then `sh scripts/build_exe.sh` → `dist\EVision RGB\EVision RGB.exe`.
+Build a standalone exe: `pip install -e ".[app,dev]"` then `sh scripts/build_exe.sh` → `dist\EVision RGB\EVision RGB.exe`
+(`"EVision RGB.exe" --selftest report.json` checks a build without touching any device).
 
 **Close other RGB software first** (the AJAZZ app, OpenRGB, Nexus, SignalRGB). They write to the same channel. Nexus runs
 OpenRGB in the background, which sends this keyboard the wrong protocol. The app detects these and offers to close them.
@@ -123,6 +142,11 @@ node scripts\ui_smoke.mjs 8899                   # drives the UI in headless Edg
 
 ## How it works
 See **[docs/PROTOCOL.md](docs/PROTOCOL.md)** for the full EVision V2 protocol, LED map and firmware quirks.
+
+## Contributing
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** (safety rules, specs first, the mutation check). Have another EVision
+keyboard? **[docs/ADDING_A_KEYBOARD.md](docs/ADDING_A_KEYBOARD.md)** says what to collect. What changed in each
+version: [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 MIT. See [LICENSE](LICENSE).
