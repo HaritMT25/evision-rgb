@@ -12,6 +12,37 @@ ACC, B, PSW, SP, DPL, DPH, P2 = 0xE0, 0xF0, 0xD0, 0x81, 0x82, 0x83, 0xA0
 SENTINEL = 0xFFFE
 
 
+def _cycle_table():
+    """Approximate clock cycles per opcode for a 1T E8051 core (CH55x): ~1 cycle per byte, plus
+    extra for external memory (MOVX/MOVC), jumps/calls/returns and MUL/DIV."""
+    length = [1] * 256
+    two = {0x05, 0x15, 0x24, 0x25, 0x34, 0x35, 0x44, 0x45, 0x54, 0x55, 0x64, 0x65, 0x94, 0x95, 0x42, 0x52, 0x62,
+           0x40, 0x50, 0x60, 0x70, 0x80, 0x74, 0x76, 0x77, 0x72, 0x82, 0x92, 0xA0, 0xA2, 0xB0, 0xB2, 0xC2, 0xD2,
+           0x86, 0x87, 0xA6, 0xA7, 0xC0, 0xD0, 0xC5, 0xE5, 0xF5}
+    two |= set(range(0x78, 0x80)) | set(range(0x88, 0x90)) | set(range(0xA8, 0xB0)) | set(range(0xD8, 0xE0))
+    three = {0x02, 0x12, 0x10, 0x20, 0x30, 0x43, 0x53, 0x63, 0x75, 0x85, 0x90, 0xD5} | set(range(0xB4, 0xC0))
+    for op in range(256):
+        if (op & 0x1F) in (0x01, 0x11) or op in two:
+            length[op] = 2
+        elif op in three:
+            length[op] = 3
+    cyc = list(length)
+    for op in (0xE0, 0xE2, 0xE3, 0xF0, 0xF2, 0xF3):
+        cyc[op] += 1
+    for op in (0x83, 0x93):
+        cyc[op] += 2
+    for op in range(256):
+        if (op & 0x1F) in (0x01, 0x11) or op in (0x02, 0x12, 0x22, 0x32, 0x73, 0x80):
+            cyc[op] += 2
+        if op in (0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0xD5) or 0xB4 <= op <= 0xBF or 0xD8 <= op <= 0xDF:
+            cyc[op] += 1
+    cyc[0xA4] = cyc[0x84] = 4
+    return np.array(cyc, dtype=np.int64)
+
+
+CYC = _cycle_table()
+
+
 @njit(cache=True, inline="always")
 def _parity(a):
     a ^= a >> 4
@@ -108,14 +139,17 @@ def run(code, iram, sfr, xdata, state, stop_pc, max_steps):
     """Execute until pc == stop_pc. state = [pc, steps]. Returns 0 ok, 1 step limit, 2 illegal opcode."""
     pc = state[0]
     steps = 0
+    cyc = 0
     while pc != stop_pc:
         if steps >= max_steps:
             state[0] = pc
             state[1] += steps
+            state[2] += cyc
             return 1
         op = code[pc]
         pc = (pc + 1) & 0xFFFF
         steps += 1
+        cyc += CYC[op]
         lo = op & 0x0F
         hi = op >> 4
         # ---- operand-family groups (A op src) ------------------------------------------------
@@ -368,9 +402,54 @@ def run(code, iram, sfr, xdata, state, stop_pc, max_steps):
         else:
             state[0] = (pc - 1) & 0xFFFF
             state[1] += steps
+            state[2] += cyc
             return 2
     state[0] = pc
     state[1] += steps
+    state[2] += cyc
+    return 0
+
+
+
+@njit(cache=True)
+def call_fn(code, iram, sfr, xdata, state, addr, max_steps):
+    """Push a return sentinel and run the subroutine at `addr` until it returns."""
+    sp = (sfr[SP] + 1) & 0xFF
+    iram[sp] = SENTINEL & 0xFF
+    sp = (sp + 1) & 0xFF
+    iram[sp] = SENTINEL >> 8
+    sfr[SP] = sp
+    state[0] = addr
+    return run(code, iram, sfr, xdata, state, SENTINEL, max_steps)
+
+
+@njit(cache=True)
+def advance_cycles(code, iram, sfr, xdata, state, until, isr_period, isr_fn, tick_fn, light_fn,
+                   pass_overhead, isr_overhead, idle_threshold):
+    """Emulate firmware time until the cycle counter state[2] reaches `until`.
+
+    Timer interrupts fire every `isr_period` cycles (state[3] = cycle of the next one). Between them the
+    main loop runs passes (tick routine + lighting task). A long pass delays the next tick exactly as on
+    the chip: interrupts during it only bump a counter that the tick routine resets.
+    """
+    while state[2] < until:
+        if state[2] >= state[3]:
+            rc = call_fn(code, iram, sfr, xdata, state, isr_fn, 1000000)
+            if rc != 0:
+                return rc
+            state[2] += isr_overhead
+            state[3] += isr_period
+            continue
+        c0 = state[2]
+        rc = call_fn(code, iram, sfr, xdata, state, tick_fn, 5000000)
+        if rc != 0:
+            return rc
+        rc = call_fn(code, iram, sfr, xdata, state, light_fn, 5000000)
+        if rc != 0:
+            return rc
+        state[2] += pass_overhead
+        if state[2] - c0 < idle_threshold and state[2] < state[3]:
+            state[2] = state[3]          # nothing to do until the next interrupt
     return 0
 
 
@@ -384,7 +463,7 @@ class FastCPU:
         self.sfr = np.zeros(256, dtype=np.int64)
         self.xdata = np.zeros(65536, dtype=np.int64)
         self.sfr[SP] = 0x07
-        self.state = np.zeros(2, dtype=np.int64)
+        self.state = np.zeros(4, dtype=np.int64)   # pc, steps, cycles, next interrupt (cycles)
 
     @property
     def steps(self) -> int:

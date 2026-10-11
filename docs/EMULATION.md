@@ -23,9 +23,12 @@ Please open an issue describing what the real effect does if one looks wrong.
 | 0E | Cartoon | cluster around H/J/K grows, fades, returns | **observed** |
 | 0F | Rain | drops falling down the columns with a trail | **observed** |
 | 10 | Scan | bar scanning back and forth | approximation |
-| 11 | Surmount | fades in to a solid preset colour; byte 18 = style 0 rose, 1 yellow, 2 green, 3 cyan (chosen colour ignored) | **firmware** |
+| 11 | Surmount | solid preset colour (byte 18: 0 rose, 1 yellow, 2 green, 3 cyan); typing drains it toward blue, idle recovers in ~2 s | **firmware** |
 | 12 | Speed | colour pulses enter from one edge (direction) and ripple across, gaps between | **observed** |
 | 14 | Custom | stored per-key layout | exact |
 
 Note: the **Random / multi-colour** flag (config byte 5) overrides the chosen colour in effects such as Traverse.
 The app now turns it off when you pick a colour.
+
+**Since v0.3 the app runs the keyboard's own firmware code** for these effects when the official AJAZZ updater is installed
+(see docs/FIRMWARE.md); the table above describes the fallback approximation used otherwise.

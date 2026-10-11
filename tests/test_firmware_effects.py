@@ -84,6 +84,22 @@ class RealFirmware(unittest.TestCase):
         lit = f.max(axis=2) > 0.15
         self.assertTrue(lit[:, [KEYS[n][0] for n in KEYS if KEYS[n][2] > 0.7]].any(), "reaches lower rows")
 
+    def test_rain_is_scattered_drops_not_whole_board_flashes(self):
+        # regression: with zeroed per-key phases the whole board pulsed in unison ("flicker")
+        f = self.run_frames(self.engine(15), 4)
+        lit = (f.max(axis=2) > 0.15)[:, [KEYS[n][0] for n in KEYS]]
+        frac = lit.mean(axis=1)
+        self.assertLess(frac.max(), 0.8, "never the whole board at once")
+        self.assertGreater(frac.mean(), 0.05, "but drops are visible")
+        changes = (lit[1:] != lit[:-1]).sum(axis=1)
+        self.assertGreater(np.median(changes), 0, "drops keep moving")
+
+    def test_flowers_gives_keys_different_colours_at_the_same_time(self):
+        # regression: with zeroed per-key hue counters every key had the same colour
+        f = self.run_frames(self.engine(11), 1.0)[-1]
+        colours = {tuple(np.round(f[KEYS[n][0]] * 8)) for n in KEYS}
+        self.assertGreater(len(colours), 10)
+
     def test_speed_direction_picks_the_entry_edge(self):
         def first(fl, key):
             f = self.run_frames(fl, 4)
@@ -92,6 +108,7 @@ class RealFirmware(unittest.TestCase):
 
     def test_traverse_is_dark_until_a_key_is_pressed_then_lights_its_row(self):
         fl = self.engine(9)
+        fl.advance(2.0)                      # settle: left-over per-key values decay like on hardware
         idle = self.run_frames(fl, 1.0)
         self.assertLess(idle.max(), 0.05, "dark while idle")
         f = self.run_frames(fl, 1.0, presses={0: "H"})

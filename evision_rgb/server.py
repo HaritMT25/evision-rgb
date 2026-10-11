@@ -247,12 +247,32 @@ def make_handler(ctl: Controller):
                 self._send(200, f.read(), mimetypes.guess_type(full)[0] or "application/octet-stream")
             return True
 
+        def _stream(self, fps: float = 60.0):
+            """Server-Sent Events: push the preview frame ~60x/s until the client disconnects."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            period = 1.0 / fps
+            try:
+                while True:
+                    t = time.monotonic()
+                    with ctl.lock:
+                        f = ctl.frame()
+                    self.wfile.write(b"data: " + json.dumps(f).encode() + b"\n\n")
+                    self.wfile.flush()
+                    time.sleep(max(0.0, period - (time.monotonic() - t)))
+            except (ConnectionError, OSError):
+                return  # browser closed the stream
+
         def do_GET(self):
             u = urlparse(self.path)
             q = parse_qs(u.query)
             try:
                 if self._static(u.path):
                     return
+                if u.path == "/stream":
+                    return self._stream()
                 with ctl.lock:
                     if u.path == "/status":
                         st = engine.status()

@@ -316,6 +316,19 @@ class ServerAPI(unittest.TestCase):
         time.sleep(0.3)
         self.assertEqual(self.call("/frame")[1]["colors"]["Esc"], "000000")
 
+    def test_preview_stream_pushes_frames_at_a_smooth_rate(self):
+        # the UI preview must be fast enough for rain drops / ripples (it was ~11 fps and looked broken)
+        req = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/stream", timeout=5)
+        t0, events = time.monotonic(), 0
+        while time.monotonic() - t0 < 1.0:
+            line = req.readline()
+            if line.startswith(b"data: "):
+                events += 1
+                frame = json.loads(line[6:])
+                self.assertIn("colors", frame)
+        req.close()
+        self.assertGreaterEqual(events, 30, f"only {events} frames/s")
+
     def test_settings_persist_to_disk(self):
         self.call("/settings", {"close_to_tray": False, "custom_active": 2})
         import evision_rgb.settings as st

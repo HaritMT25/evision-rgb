@@ -31,8 +31,14 @@ TICK_FN, LIGHT_FN = 0x947F, 0x8B5C
 POST_CALL = 0x8CB1          # LCALL 0xDCD7 ; LCALL 0xED4D (hardware output stage, not needed here)
 CFG, MODE, CUSTOM_BASE, FRAME = 0x0A64, 0x0A65, 0xA700, 0x066D
 ISR_FN = 0xE36E             # Timer1 interrupt body (plain function ending in RET)
-ISR_S = 800 * 12 / 32e6     # 300 us
-HUE_TABLE = 0x09B5          # per-key hue counters (Flowers etc.); uninitialised RAM on real hardware
+FSYS = 32e6                 # CH555: CLOCK_CFG=6 -> Fpll/3
+ISR_CYCLES = 800 * 12       # Timer1 at Fsys/12, 800 counts -> 300 us
+ISR_S = ISR_CYCLES / FSYS
+PASS_OVERHEAD = 400         # cycles of the other main-loop work per pass (key/USB bookkeeping)
+ISR_OVERHEAD = 40           # interrupt entry/exit (register saves, RETI)
+IDLE_THRESHOLD = 1500       # a pass cheaper than this did no effect work
+HUE_TABLE = 0x09B5          # per-key hue/colour index (Flowers, Rain colours); uninitialised RAM on hardware
+PHASE_TABLE = 0x05DA        # per-key phase/intensity (Rain drops, Reaction); uninitialised RAM on hardware
 CAPS_SIG = bytes.fromhex("aa5500000d805000020000")
 
 
@@ -88,6 +94,7 @@ class FirmwareLighting:
         # per-key hue counters start with power-up garbage; emulate that deterministically
         rng = np.random.default_rng(seed)
         cpu.xdata[HUE_TABLE:HUE_TABLE + 128] = [int(v) for v in rng.integers(0, 0xC0, 128)]
+        cpu.xdata[PHASE_TABLE:PHASE_TABLE + 128] = [int(v) for v in rng.integers(0, 0xC0, 128)]
         self.cpu = cpu
         self.time_scale = time_scale
         self.ticks = 0
@@ -102,12 +109,24 @@ class FirmwareLighting:
         self.cpu.code[a:a + 384] = list(frame)
 
     def advance(self, seconds: float):
-        """Advance emulated time: one Timer1 interrupt (ISR body) + one main-loop pass per period."""
+        """Advance emulated time. With the JIT core, time is CPU-cycle accurate: long effect frames
+        delay ticks like on the real chip. The reference core uses one pass per interrupt."""
+        cpu = self.cpu
+        if hasattr(cpu, "state") and len(cpu.state) >= 4:
+            from .fw8051_fast import advance_cycles
+            st = cpu.state
+            if st[3] == 0:
+                st[3] = st[2] + ISR_CYCLES
+            until = st[2] + int(seconds * FSYS / self.time_scale)
+            rc = advance_cycles(cpu.code, cpu.iram, cpu.sfr, cpu.xdata, st, until, ISR_CYCLES,
+                                ISR_FN, TICK_FN, LIGHT_FN, PASS_OVERHEAD, ISR_OVERHEAD, IDLE_THRESHOLD)
+            if rc != 0:
+                raise RuntimeError(f"firmware emulation stopped (code {rc}, pc={int(st[0]):#06x})")
+            return
         period = ISR_S * self.time_scale
         self._carry += seconds
         n = int(self._carry / period)
         self._carry -= n * period
-        cpu = self.cpu
         for _ in range(n):
             cpu.call(ISR_FN)
             cpu.call(TICK_FN)

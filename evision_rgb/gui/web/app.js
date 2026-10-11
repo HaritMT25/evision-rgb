@@ -129,7 +129,22 @@ function colorKeys(colors) {
 }
 function paintSelection() { for (const [n, el] of Object.entries(S.keyEls)) el.classList.toggle("sel", S.tab === "custom" && S.sel.has(n)); }
 
-// preview loop: custom-tab edits show local state; otherwise mirror the keyboard
+// preview: a 60 fps Server-Sent-Events stream mirrors the keyboard; polling is the fallback
+function showFrame(f) {
+  if (S.tab === "custom" && (S.dirty || Object.keys(S.custom).length)) return;  // editor shows local colours
+  colorKeys(f.colors);
+  S.animated = !!f.animated;
+  const now = Date.now();
+  if (now - (S.captionAt || 0) > 250) { setCaption(f); S.captionAt = now; }
+}
+function startStream() {
+  if (!window.EventSource) return previewLoop();
+  const es = new EventSource("/stream");
+  es.onmessage = e => { try { showFrame(JSON.parse(e.data)); } catch (err) { } };
+  es.onerror = () => { es.close(); setTimeout(startStream, 1500); };  // reconnect (app restarting, …)
+  const local = () => { if (S.tab === "custom" && (S.dirty || Object.keys(S.custom).length)) colorKeys(S.custom); setTimeout(local, 200); };
+  local();
+}
 async function previewLoop() {
   const live = (S.status && S.status.live) || S.animated;
   const wait = live ? 90 : 1500;
@@ -579,7 +594,7 @@ async function boot() {
   $$("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#conflictPill").onclick = () => showTab("settings");
   await loadInfo().catch(e => toast(e.message, true));
-  statusLoop(); conflictLoop(); previewLoop();
+  statusLoop(); conflictLoop(); startStream();
   if (location.hash.length > 1) showTab(location.hash.slice(1));
 }
 boot().catch(e => toast("Start-up failed: " + e.message, true));

@@ -201,6 +201,7 @@ EFFECTS["emulate"] = Emulated
 _FW = {"base": None, "tried": False, "caps": None, "source": None, "disabled": False}
 _FW_LOCK = threading.Lock()
 FULL_SCALE = 200  # firmware output at brightness 4 (255 * ~0.78)
+SETTLE_S = 2.0    # emulated settling time after (re)configuring an effect
 
 
 def set_device_caps(caps: bytes):
@@ -254,7 +255,7 @@ def firmware_status() -> dict:
 class FirmwareEmulated(Effect):
     """A built-in effect rendered by the keyboard's own firmware code (exact)."""
     name = "emulate"
-    fps = 30
+    fps = 60
 
     def __init__(self, base, mode=6, brightness=4, speed=2, direction=0, random=0, color="ffffff",
                  custom: dict | None = None, variant: int = 0, dim: bool = True, config: bytes | None = None):
@@ -278,7 +279,7 @@ class FirmwareEmulated(Effect):
         self.last_t = None
         self.lock = threading.Lock()
         self.events = KeyEvents(self.press)
-        self.fl.advance(0.05)       # let the effect draw its first frame
+        self.fl.advance(SETTLE_S)   # settle like the keyboard does after a mode change (left-over values decay)
 
     def press(self, name: str):
         with self.lock:
