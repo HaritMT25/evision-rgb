@@ -55,8 +55,9 @@ def frame_from(colors: Mapping[str | int, object] | None = None, default=(0, 0, 
 
 
 class Keyboard:
-    def __init__(self, verbose: bool = False):
-        self.dev = AK820(allow_writes=True, verbose=verbose)
+    def __init__(self, verbose: bool = False, wait: bool = False):
+        """wait=True: work without the keyboard plugged in yet (commands fail until it is, then it is opened)."""
+        self.dev = AK820(allow_writes=True, verbose=verbose, wait=wait)
 
     def close(self):
         self.dev.close()
@@ -225,7 +226,8 @@ class Stream:
                 try:
                     self.dev.direct(snap)
                     self.frames_sent += 1
-                except Exception as e:  # keep streaming; surface the last error
+                    self.error = None
+                except Exception as e:  # keep streaming (the transport reconnects); surface the last error
                     self.error = e
                     time.sleep(0.05)
                 last = time.monotonic()

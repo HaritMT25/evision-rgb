@@ -50,8 +50,30 @@ class FakeKeyboard:
         self.drop_echoes = 0                 # simulate lost echoes
         self.bad_checksums = 0
         self.foreign_before_reply: list[bytes] = []  # echoes of other programs arriving mid-transaction
+        self.unplugged = False               # USB cable out: not enumerated, every handle fails
+        self.generation = 0                  # bumped on every (re-)enumeration: older handles are stale
+        self.opens = 0                       # how often a program opened the vendor interface
+        self.scans = 0                       # how often a program listed the HID devices (looking for it)
         self._last_visible = None
         self._record()
+
+    # ---- USB events --------------------------------------------------------
+    def unplug(self):
+        with self.lock:
+            self.unplugged, self.generation = True, self.generation + 1
+            self.rx.clear()
+
+    def replug(self):
+        """Back on the bus: a fresh device that shows its stored effect (not the last streamed frame)."""
+        with self.lock:
+            self.unplugged, self.direct_on, self.in_config = False, False, False
+            self.applied = (bytes(self.config), bytes(self.areas[0]))
+            self._record()
+
+    def reset_usb(self):
+        """USB reset (sleep / resume, selective suspend): the keyboard re-enumerates, open handles go stale."""
+        self.unplug()
+        self.replug()
 
     # ---- what the keyboard shows -------------------------------------------
     def visible(self) -> tuple:
@@ -137,18 +159,29 @@ class FakeHidDevice:
     def __init__(self, kb: FakeKeyboard):
         self.kb = kb
         self.nonblocking = False
+        self.generation = None
 
     def open_path(self, path):
-        pass
+        with self.kb.lock:
+            self.kb.opens += 1  # every attempt, so a busy reconnect loop shows
+            if self.kb.unplugged:
+                raise OSError("open failed")
+            self.generation = self.kb.generation
+
+    def _alive(self, what):
+        if self.kb.unplugged or self.generation != self.kb.generation:  # like hidapi on a stale Windows handle
+            raise OSError(f"{what} error")
 
     def set_nonblocking(self, v):
         self.nonblocking = bool(v)
 
     def write(self, data):
+        self._alive("write")
         self.kb.handle(bytes(data))
         return len(data)
 
     def read(self, n, timeout_ms=0):
+        self._alive("read")
         deadline = time.monotonic() + (timeout_ms / 1000 if timeout_ms else 0)
         while True:
             with self.kb.lock:
@@ -175,6 +208,9 @@ class FakeHidModule:
         return FakeHidDevice(self.kb)
 
     def enumerate(self, vid=0, pid=0):
+        self.kb.scans += 1
+        if self.kb.unplugged:
+            return []
         return [{"usage_page": 0xFF1C, "usage": 0x92, "path": PATH, "interface_number": 1}]
 
 

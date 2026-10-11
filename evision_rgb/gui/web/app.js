@@ -208,6 +208,7 @@ function setCaption(f) {
   if (S.tab === "custom" && S.dirty) t = "<b>Preview</b> of unsaved custom colours";
   else if (f.source === "live") t = `<b>Live:</b> ${esc(effectLabel(f.effect))} · ` + (st.idle ? "still (drawn less often to save CPU)" : `${st.fps || 0} fps`)
     + (st.apps ? ` · app profile: ${st.apps.foreground || "?"} → ${st.apps.rule}` : "");
+  else if (f.source === "disconnected") t = "<b>Keyboard disconnected</b> · plug it in and it connects by itself";
   else if (f.source === "custom") t = `<b>Keyboard effect:</b> Custom (group ${(S.settings.custom_active || 0) + 1})`;
   else t = `<b>Keyboard effect:</b> ${modeLabel(f.mode)}` + (f.animated ? ' <span class="hint">— preview is an approximation of the keyboard\'s own animation</span>' : "");
   $("#caption").innerHTML = t;
@@ -218,14 +219,15 @@ async function statusLoop() {
   try {
     S.status = await api("/status");
     const dot = $("#statusDot");
-    dot.className = "dot " + (S.status.live ? "live" : "ok");
+    dot.className = "dot " + (S.status.keyboard === "disconnected" ? "bad" : S.status.live ? "live" : "ok");
     const bat = S.status.battery;
     $("#statusText").textContent = S.status.live ? `live: ${effectLabel(S.status.effect)}`
       : bat && bat.paused ? `battery saver: ${effectLabel(bat.paused)} paused` : "keyboard connected";
     $$(".card").forEach(c => c.classList.toggle("on", S.status.effect === c.dataset.effect && !S.status.apps));
     markLayersRunning();
     const err = S.status.stream_error || S.status.audio_error;
-    if (err) $("#statusText").textContent += " · " + err.slice(0, 60);
+    if (S.status.keyboard === "disconnected") $("#statusText").textContent = "keyboard disconnected · reconnecting…";
+    else if (err) $("#statusText").textContent += " · " + err.slice(0, 60);
     renderTimer();
     renderBattery();
     if (S.frame && Date.now() - (S.captionAt || 0) > 900) { setCaption(S.frame); S.captionAt = Date.now(); }

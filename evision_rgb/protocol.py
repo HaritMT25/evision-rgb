@@ -82,18 +82,54 @@ def find_path() -> bytes:
 
 
 class AK820:
-    def __init__(self, path: bytes | None = None, allow_writes: bool = False, verbose: bool = False):
-        self.dev = hid.device()
-        self.dev.open_path(path or find_path())
-        # read(n) with no timeout becomes a non-blocking poll; read(n, ms) still waits.
-        self.dev.set_nonblocking(1)
+    REOPEN_S = 1.0  # while the keyboard is gone, try to open it again at most this often
+
+    def __init__(self, path: bytes | None = None, allow_writes: bool = False, verbose: bool = False,
+                 wait: bool = False):
+        """wait=True: start even if the keyboard is not plugged in; the first command after it is opens it."""
+        self._path = path
         self.allow_writes = allow_writes
         self.verbose = verbose
         self.lock = threading.RLock()
         self.foreign = 0  # echoes of packets some other program sent
+        self.connected = False
+        self._next_open = 0.0
+        self.dev = None
+        try:
+            self._open()
+        except (OSError, ProtocolError):
+            if not wait:
+                raise
+
+    def _open(self):
+        dev = hid.device()
+        dev.open_path(self._path or find_path())
+        # read(n) with no timeout becomes a non-blocking poll; read(n, ms) still waits.
+        dev.set_nonblocking(1)
+        self.dev, self.connected = dev, True
+
+    def _reopen(self):
+        """The handle went stale: the keyboard was replugged, or its USB connection was reset (sleep / resume,
+        power saving on battery). Open it again, at most once per REOPEN_S while it is gone."""
+        self.connected = False
+        now = time.monotonic()
+        if now < self._next_open:
+            raise ProtocolError("keyboard disconnected (reconnecting)")
+        self._next_open = now + self.REOPEN_S
+        try:
+            self.dev.close()
+        except Exception:  # noqa: BLE001 - already dead
+            pass
+        try:
+            self._open()
+        except (OSError, ProtocolError) as e:
+            raise ProtocolError(f"keyboard disconnected ({e})") from e
 
     def close(self):
-        self.dev.close()
+        try:
+            self.dev.close()
+        except Exception:  # noqa: BLE001 - a stale handle can't be closed cleanly
+            pass
 
     def __enter__(self):
         return self
@@ -115,30 +151,39 @@ class AK820:
             raise ProtocolError(f"command {cmd:#04x} writes to the device; open with allow_writes=True")
         pkt = build(cmd, length, offset, data)
         with self.lock:
-            # Every allowed command is idempotent, so a missed echo (e.g. another
-            # program writing to the same channel) is handled by resending.
-            for _attempt in range(retries + 1):
-                self._drain()
+            if not self.connected:
+                self._reopen()
+            try:
+                return self._transact(pkt, cmd, timeout_ms, retries)
+            except OSError:  # stale handle (hidapi: "read error" / "write error"): open again, then retry once
+                self._reopen()
+                return self._transact(pkt, cmd, timeout_ms, retries)
+
+    def _transact(self, pkt: bytearray, cmd: int, timeout_ms: int, retries: int) -> bytes:
+        # Every allowed command is idempotent, so a missed echo (e.g. another
+        # program writing to the same channel) is handled by resending.
+        for _attempt in range(retries + 1):
+            self._drain()
+            if self.verbose:
+                print(">>", pkt.hex(" "))
+            n = self.dev.write(bytes(pkt))
+            if n < 0:
+                raise OSError(f"write failed: {self.dev.error()}")
+            deadline = time.monotonic() + timeout_ms / 1000
+            while time.monotonic() < deadline:
+                r = self.dev.read(PACKET, max(1, int((deadline - time.monotonic()) * 1000)))
+                if not r:
+                    continue
+                r = bytes(r)
                 if self.verbose:
-                    print(">>", pkt.hex(" "))
-                n = self.dev.write(bytes(pkt))
-                if n < 0:
-                    raise ProtocolError(f"write failed: {self.dev.error()}")
-                deadline = time.monotonic() + timeout_ms / 1000
-                while time.monotonic() < deadline:
-                    r = self.dev.read(PACKET, max(1, int((deadline - time.monotonic()) * 1000)))
-                    if not r:
-                        continue
-                    r = bytes(r)
-                    if self.verbose:
-                        print("<<", r.hex(" "))
-                    if r[0] == REPORT_ID and r[1:4] == pkt[1:4] and r[5:7] == pkt[5:7]:
-                        if r[7] != 0:
-                            raise ProtocolError(f"device status {r[7]:#04x} for cmd {cmd:#04x}")
-                        return r
-                    if r[0] == REPORT_ID and r[1:4] != pkt[1:4]:
-                        self.foreign += 1
-            raise ProtocolError(f"no reply to cmd {cmd:#04x}")
+                    print("<<", r.hex(" "))
+                if r[0] == REPORT_ID and r[1:4] == pkt[1:4] and r[5:7] == pkt[5:7]:
+                    if r[7] != 0:
+                        raise ProtocolError(f"device status {r[7]:#04x} for cmd {cmd:#04x}")
+                    return r
+                if r[0] == REPORT_ID and r[1:4] != pkt[1:4]:
+                    self.foreign += 1
+        raise ProtocolError(f"no reply to cmd {cmd:#04x}")
 
     def read_block(self, cmd: int, total: int, offset: int = 0) -> bytes:
         out = bytearray()

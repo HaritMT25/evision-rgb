@@ -285,6 +285,19 @@ MUTANTS = {
         '        return self.clock() - self.received < ACTIVE_S and self.playing()', '        return self.playing()'),
     "games: the game's own posts need a JSON content type": ('evision_rgb/server.py',
         '            elif post and not self.path.startswith("/game/") and \\\n', '            elif post and \\\n'),
+    # -- USB connection comes and goes
+    "usb: a stale handle is never opened again (the user's frozen keyboard)": ('evision_rgb/protocol.py',
+        '            except OSError:  # stale handle (hidapi: "read error" / "write error"): open again, then retry once\n                self._reopen()\n                return self._transact(pkt, cmd, timeout_ms, retries)', '            except OSError:  # stale handle (hidapi: "read error" / "write error"): open again, then retry once\n                raise'),
+    'usb: reconnect attempts are not rate-limited (busy loop while unplugged)': ('evision_rgb/protocol.py',
+        '        if now < self._next_open:', '        if False:'),
+    'usb: a recovered stream keeps reporting the old error': ('evision_rgb/keyboard.py',
+        '                    self.frames_sent += 1\n                    self.error = None', '                    self.frames_sent += 1'),
+    'usb: the app does not start without the keyboard': ('evision_rgb/server.py',
+        '        self.engine = engine or Engine(Keyboard(wait=True))', '        self.engine = engine or Engine(Keyboard())'),
+    'usb: no lighting backup when the keyboard is plugged in later': ('evision_rgb/server.py',
+        '                self._first_contact()\n                self._battery_tick()', '                self._battery_tick()'),
+    'usb: the status never says disconnected': ('evision_rgb/server.py',
+        '                        st["keyboard"] = "connected" if ctl.kb.dev.connected else "disconnected"', '                        st["keyboard"] = "connected"'),
     # -- releases
     'release: a failing self-test check still passes the build': ('evision_rgb/gui/app.py',
         '    ok = all(c["ok"] for c in checks.values())', '    ok = True'),
@@ -303,7 +316,7 @@ HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_b
          "album:": ["test_feature_nowplaying"], "pad: the play key": ["test_feature_nowplaying"], "pad": ["test_feature_macropad"],
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
          "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
-         "release:": ["test_release"]}
+         "release:": ["test_release"], "usb:": ["test_feature_reconnect"]}
 
 
 def coarse_timers() -> bool:

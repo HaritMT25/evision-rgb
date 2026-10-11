@@ -50,7 +50,7 @@ from . import media  # registers 'nowplaying' (album colours)
 from . import games  # registers 'cs2' and 'dota2' (game lighting)
 from . import profiles
 from .effects import EFFECTS, Engine, NAMES
-from .keyboard import CONFIG_LEN
+from .keyboard import CONFIG_LEN, Keyboard
 from .layout import KEYS
 from .protocol import CMD_WRITE_CONFIG, MODES
 
@@ -87,7 +87,7 @@ class Controller:
 
     def __init__(self, engine: Engine | None = None, probes: dict | None = None, automation_hz: float = 10,
                  hook_keys: bool = True):
-        self.engine = engine or Engine()
+        self.engine = engine or Engine(Keyboard(wait=True))  # the app also starts with the keyboard unplugged
         self.kb = self.engine.kb
         self.lock = threading.RLock()
         self.apps = None
@@ -105,11 +105,9 @@ class Controller:
         self._hook_keys = hook_keys
         self._sync_key_hook()
         self.show_cb = None  # set by the desktop app: bring its window to front
-        self.backup_dir = self.ensure_backup()
-        try:  # exact effect emulation needs the firmware image that matches this keyboard
-            emulate.set_device_caps(self.kb.dev.capabilities())
-        except Exception:
-            pass
+        self.backup_dir = None
+        self._device_ready = False
+        self._first_contact()
         # boot the firmware engine (JIT compile + extraction) without blocking start-up
         threading.Thread(target=emulate.firmware_base, daemon=True).start()
         self._info_cache = (0.0, None)
@@ -129,6 +127,19 @@ class Controller:
 
     def start_pads(self):
         self.pads.start()
+
+    def _first_contact(self):
+        """Once the keyboard is there: the first-start lighting backup, and its capabilities (exact effect
+        emulation needs the firmware image that matches it). Retried by the automation loop until it works."""
+        if self._device_ready:
+            return
+        try:
+            if self.backup_dir is None:
+                self.backup_dir = self.ensure_backup()
+            emulate.set_device_caps(self.kb.dev.capabilities())
+            self._device_ready = True
+        except Exception:  # noqa: BLE001 - not plugged in yet
+            pass
 
     def ensure_backup(self) -> str:
         """On the very first start, save the keyboard's lighting before this app changes anything.
@@ -165,6 +176,7 @@ class Controller:
     def _automation_loop(self):
         while not self._auto_stop.wait(1.0 / self._auto_hz):
             try:
+                self._first_contact()
                 self._battery_tick()
                 self._games_tick()
                 need = self.automation.active()
@@ -470,7 +482,10 @@ class Controller:
                 self._frame = (last, {"source": "live", "effect": eng.effect.name if eng.effect else None,
                                       "colors": {n: _hex(c) for n, c in zip(NAMES, last)}})
             return self._frame[1]
-        info = self.info()
+        try:
+            info = self.info()
+        except Exception:  # noqa: BLE001 - unplugged: the window says so instead of failing
+            return {"source": "disconnected", "colors": {}}
         if info["mode_id"] == MODES["custom"]:
             return {"source": "custom", "mode": info["mode"], "colors": self.kb.get_custom(0)}
         key = tuple(info[k] for k in ("mode_id", "brightness", "speed", "direction", "random", "color", "variant"))
@@ -589,6 +604,7 @@ def make_handler(ctl: Controller):
                 with ctl.lock:
                     if u.path == "/status":
                         st = engine.status()
+                        st["keyboard"] = "connected" if ctl.kb.dev.connected else "disconnected"
                         st["timer"] = ctl.automation.timer_status()
                         st["battery"] = ctl.battery_status()
                         st["apps"] = ({"foreground": ctl.apps.app,
@@ -766,7 +782,7 @@ def make_handler(ctl: Controller):
                         return self._send(200, {"closed": system.close_process(int(req["pid"]))})
                     if p == "/restore":
                         d = req.get("dir") or ctl.backup_dir
-                        if not os.path.isfile(os.path.join(d, "config.bin")):
+                        if not d or not os.path.isfile(os.path.join(d, "config.bin")):
                             raise ValueError("no lighting backup found")
                         ctl.stop_apps()
                         ctl._lighting_chosen()
