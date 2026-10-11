@@ -9,6 +9,7 @@ import colorsys
 import math
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,6 +25,14 @@ Y = np.array([KEYS[n][2] for n in NAMES])
 N = len(NAMES)
 INDEX = {n.lower(): i for i, n in enumerate(NAMES)}
 GAMMA = 2.2  # effects render perceptual colours; LEDs get colour ** GAMMA
+_ENGINES = weakref.WeakSet()
+
+
+def wake_engines():
+    """Something is about to change the picture (key press, notification): draw the next frame now
+    instead of at the slow rate used while nothing moves."""
+    for eng in list(_ENGINES):
+        eng.wake()
 
 
 def rgbf(c) -> np.ndarray:
@@ -164,6 +173,7 @@ class KeyEvents:
         name = _VK.get(vk)
         if name in KEYS:
             self.callback(name)
+            wake_engines()
 
     def key_up(self, vk):
         self.down.discard(vk)
@@ -627,7 +637,12 @@ EFFECTS = {cls.name: cls for cls in (Solid, Mirror, Rainbow, Breathing, Gradient
 
 # ---------------------------------------------------------------------------- engine
 class Engine:
-    """Owns the keyboard. One live effect at a time, plus manual per-key overrides."""
+    """Owns the keyboard. One live effect at a time, plus manual per-key overrides.
+
+    Frames that did not change are not resent (the stream's keep-alive holds them on the keyboard), and
+    while nothing changes the effect is drawn at a slow rate; key presses and overlays wake it at once."""
+    IDLE_AFTER = 0.5   # s without a visible change before drawing slows down
+    IDLE_PERIOD = 0.1  # s between frames while nothing changes
 
     def __init__(self, kb: Keyboard | None = None):
         self.kb = kb or Keyboard()
@@ -636,11 +651,18 @@ class Engine:
         self.overrides: dict[int, np.ndarray] = {}
         self._thread = None
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self.lock = threading.RLock()
         self.fps_actual = 0.0
         self.last: np.ndarray | None = None  # last rendered colours (N,3) for UI preview
         self.params: dict = {}
         self.post = None  # optional fn(colors, monotonic_t) -> colors (automation overlays)
+        self.idle_after, self.idle_period = self.IDLE_AFTER, self.IDLE_PERIOD
+        self.idle = False
+        _ENGINES.add(self)
+
+    def wake(self):
+        self._wake.set()
 
     def _ensure_stream(self):
         if self.stream is None:
@@ -664,7 +686,9 @@ class Engine:
         t0 = time.monotonic()
         frames, tl = 0, t0
         period = 1.0 / eff.fps
+        sent, changed = None, t0
         while not stop.is_set():
+            self._wake.clear()
             t = time.monotonic() - t0
             colors = np.array(eff.render(t), dtype=float)
             # no engine lock in here: stop() holds it while it waits for this thread to finish
@@ -678,14 +702,21 @@ class Engine:
             stream = self.stream
             if stop.is_set() or stream is None:
                 break
-            self.last = colors
-            stream.set_frame(to_frame(colors, 1.0 if getattr(eff, "raw", False) else GAMMA))
-            stream.show()
-            frames += 1
+            frame = to_frame(colors, 1.0 if getattr(eff, "raw", False) else GAMMA)
             now = time.monotonic()
+            if frame != sent:  # an unchanged frame is not resent: the stream's keep-alive holds it
+                self.last = colors
+                stream.set_frame(frame)
+                stream.show()
+                sent, changed = frame, now
+            frames += 1
             if now - tl >= 1:
                 self.fps_actual, frames, tl = frames / (now - tl), 0, now
-            time.sleep(max(0.0, period - (time.monotonic() - now)))
+            self.idle = now - changed >= self.idle_after
+            if self.idle:  # slow rate; a key press or an overlay ends the wait at once
+                self._wake.wait(max(0.0, max(period, self.idle_period) - (time.monotonic() - now)))
+            else:  # not Event.wait: on Windows its timeout rounds up to the 15.6 ms timer tick (30 fps)
+                time.sleep(max(0.0, period - (time.monotonic() - now)))
 
     def set_keys(self, colors: dict) -> dict:
         """Per-key override on top of the running effect (or on black if none)."""
@@ -698,21 +729,25 @@ class Engine:
                     self.overrides[i] = rgbf(c)
             if self.effect is None:
                 self.run("solid", color="000000")
+            self.wake()
         return self.status()
 
     def clear_keys(self):
         with self.lock:
             self.overrides.clear()
+            self.wake()
 
     def stop_effect(self):
         with self.lock:
             if self.effect:
                 self._stop.set()
+                self.wake()
                 if self._thread:
                     self._thread.join(2)
                 self.effect.stop()
                 self.effect = None
                 self.last = None
+                self.idle = False
 
     def pause(self):
         """Freeze live output before a persistent write: the keyboard keeps showing the last live
@@ -736,7 +771,8 @@ class Engine:
         err = getattr(getattr(self.effect, "audio", None), "error", None)
         return {"live": self.stream is not None, "effect": self.effect.name if self.effect else None,
                 "params": self.params if self.effect else None,
-                "fps": round(self.fps_actual, 1), "overrides": len(self.overrides),
+                "fps": round(self.fps_actual, 1), "idle": bool(self.effect and self.idle),
+                "overrides": len(self.overrides),
                 "frames_sent": self.stream.frames_sent if self.stream else 0,
                 "stream_error": repr(self.stream.error) if self.stream and self.stream.error else None,
                 "audio_error": err}

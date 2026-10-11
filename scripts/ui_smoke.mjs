@@ -185,6 +185,20 @@ try {
             document.dispatchEvent(new Event("visibilitychange")); await T.wait(600);`);
   check("and resumes when it is shown", await js(`return !!S.es && S.es.readyState !== 2`));
 
+  // ---- battery saver & still pictures
+  await js(`showTab("auto"); await T.wait(1300);`);
+  check("the battery saver switch is on by default", await js(`return $('[data-a="battery.enabled"]').checked === true`));
+  check("its state is shown (the simulated PC is plugged in)", (await js(`return $("#batStatus").textContent`)).startsWith("Plugged in."),
+    await js(`return $("#batStatus").textContent`));
+  await js(`const t = $('[data-a="battery.enabled"]'); t.checked = false; t.dispatchEvent(new Event("input")); await T.wait(700);`);
+  check("switching it off is saved", (await js(`return (await api("/automation")).battery.enabled`)) === false);
+  await js(`const t = $('[data-a="battery.enabled"]'); t.checked = true; t.dispatchEvent(new Event("input")); await T.wait(700);`);
+  await shot("automation-battery");
+  await js(`await api("/run", {effect: "solid", params: {color: "203040"}}); await T.wait(2300);`);
+  check("a still live picture is captioned as drawn less often", /still/.test(await js(`return $("#caption").textContent`)),
+    await js(`return $("#caption").textContent`));
+  check("and the board shows it", await js(`return S.frame && S.frame.colors.Q === "203040"`));
+
   // ---- other tabs still render
   for (const t of ["light", "live", "auto", "apps", "settings"]) await js(`showTab("${t}"); await T.wait(250);`);
   await js(`showTab("apps"); await T.wait(100); $("#appsAdd").click(); const tr = $("#appsRows tr:last-child"); const s = tr.querySelector("[data-k=effect]"); s.value = "layers"; s.dispatchEvent(new Event("change"));`);

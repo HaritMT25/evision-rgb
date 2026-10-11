@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from .effects import INDEX, N, X, Y
+from .effects import INDEX, N, X, Y, wake_engines
 from .keyboard import parse_color
 from .shortcuts import CATEGORY_COLOURS, hints as shortcut_hints
 
@@ -29,18 +29,20 @@ DEFAULTS = {
     "night": {"enabled": False, "start": "22:00", "end": "07:00", "brightness": 0.3},
     "timer": {"color": "00c0ff", "done_color": "ff3000"},
     "hints": {"enabled": True, "delay_ms": 500, "dim": 0.3, "custom": {}},
+    "battery": {"enabled": True},  # on battery the keyboard's own effect takes over from live effects
 }
 NUMBER_ROW = np.array([i for i in range(N) if 0.1 < Y[i] < 0.35])
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 NEUTRAL_PROBES = {"caps": lambda: False, "mic_muted": lambda: False, "idle": lambda: 0.0, "locked": lambda: False,
-                  "now": lambda: dt.datetime(2026, 1, 1, 12), "modifiers": lambda: frozenset(), "app": lambda: ""}
+                  "now": lambda: dt.datetime(2026, 1, 1, 12), "modifiers": lambda: frozenset(), "app": lambda: "",
+                  "on_battery": lambda: False}
 MOD_KEYS = {"ctrl": ("LCtrl", "RCtrl"), "shift": ("LShift", "RShift"), "alt": ("LAlt", "RAlt"), "win": ("LWin",)}
 
 
 # ------------------------------------------------------------------------------ probes (Windows)
 def default_probes() -> dict:
     if os.name != "nt":
-        return dict(NEUTRAL_PROBES, now=dt.datetime.now)
+        return dict(NEUTRAL_PROBES, now=dt.datetime.now, on_battery=_BatteryProbe())
     import ctypes
     import ctypes.wintypes as wt
     user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
@@ -72,7 +74,26 @@ def default_probes() -> dict:
         return frozenset(held)
 
     return {"caps": caps, "mic_muted": _MicProbe(), "idle": idle, "locked": locked, "now": dt.datetime.now,
-            "modifiers": modifiers, "app": _AppProbe()}
+            "modifiers": modifiers, "app": _AppProbe(), "on_battery": _BatteryProbe()}
+
+
+class _BatteryProbe:
+    """True on battery, False plugged in, None without a battery (desktop PC) or when unknown.
+    Re-read every 2 s."""
+
+    def __init__(self):
+        self.t, self.value = -1e9, None
+
+    def __call__(self):
+        if time.monotonic() - self.t >= 2.0:
+            self.t = time.monotonic()
+            try:
+                import psutil
+                b = psutil.sensors_battery()
+                self.value = None if b is None or b.power_plugged is None else not b.power_plugged
+            except Exception:
+                self.value = None
+        return self.value
 
 
 class _AppProbe:
@@ -145,6 +166,8 @@ def validate(cfg: dict) -> dict:
         raise ValueError("hints: delay_ms 0..5000, dim 0..1")
     if not isinstance(h.get("custom", {}), dict):
         raise ValueError("hints: custom must be an object {app: {combo: {category: [keys]}}}")
+    if not isinstance(cfg["battery"]["enabled"], bool):
+        raise ValueError("battery: enabled must be true or false")
     return cfg
 
 
@@ -170,6 +193,7 @@ class Automation:
         cfg = validate(_merge(self.cfg, patch))
         with self.lock:
             self.cfg = cfg
+        wake_engines()
         return cfg
 
     # -- notifications
@@ -178,6 +202,7 @@ class Automation:
         with self.lock:
             self.flashes.append({"t0": time.monotonic() if t is None else t, "rgb": _rgb(color), "idx": idx,
                                  "n": max(1, int(flashes)), "period": max(0.05, float(period))})
+        wake_engines()
 
     # -- timer
     def start_timer(self, minutes: float, label: str = "", t: float | None = None):
@@ -185,11 +210,13 @@ class Automation:
             raise ValueError("minutes must be > 0")
         with self.lock:
             self.timer = {"t0": time.monotonic() if t is None else t, "dur": float(minutes) * 60, "label": label}
+        wake_engines()
 
     def cancel_timer(self):
         with self.lock:
             self.timer = None
             self.done_until = -1e9
+        wake_engines()
 
     def timer_status(self, t: float | None = None) -> dict | None:
         t = time.monotonic() if t is None else t

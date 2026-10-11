@@ -12,7 +12,8 @@ POST /apps     {"enabled": true, "default": {...}, "rules": [{"match": "code.exe
 POST /settings {...partial settings...}        POST /autostart {"enabled": true}
 POST /notify   {"color": "ff0000", "keys": ["Esc"], "flashes": 3, "period": 0.35}   flash keys or the board
 POST /timer    {"minutes": 25, "label": "focus"} | {"cancel": true}                 number-row countdown
-GET|POST /automation  indicators (caps_lock, mic_mute), idle/lock dimming, night schedule
+GET|POST /automation  indicators (caps_lock, mic_mute), idle/lock dimming, night schedule, battery saver
+         ({"battery": {"enabled": true}}: on battery live effects pause and the keyboard shows its own effect)
 POST /close_conflict {"pid": 123}              POST /restore {}  (restore pre-session backup)
 GET  /profiles                                 saved profiles (name, hardware mode, live effect)
 GET  /profiles/export?name=N[&as=code]         shareable file {"format": "evision-rgb-profile", ...} or share code
@@ -52,6 +53,13 @@ BACKUP_FILES = ("config.bin", "custom0.bin", "custom1.bin", "custom2.bin", "keym
 
 
 MODE_NAME = {i: n for n, i in MODES.items()}
+_STREAMS = {"open": 0}
+_STREAMS_LOCK = threading.Lock()
+
+
+def open_streams() -> int:
+    """Preview streams (app windows) currently connected."""
+    return _STREAMS["open"]
 
 
 def _hex(c) -> str:
@@ -100,6 +108,10 @@ class Controller:
         self._emu = (None, None, 0.0)  # (config key, emulator, t0) for the preview
         emulate.set_stored_effect(self._emulation_params)  # 'keyboard' layers show the stored effect
         self.active_profile = None  # name of the profile applied last, until the lighting is changed otherwise
+        self._frame = (None, None)  # (engine.last, preview dict): the preview is built once per new frame
+        self._saving = False        # battery saver active (on battery and switched on)
+        self._on_battery = None
+        self.battery_paused = None  # what the battery saver stopped: {"effect", "params", "overrides"} | {"apps"}
         from .macropad import PadManager
         self.pads = PadManager(self)  # started by the app / `evrgb serve` (start_pads), never by tests
         threading.Thread(target=self._automation_loop, daemon=True).start()
@@ -142,6 +154,7 @@ class Controller:
     def _automation_loop(self):
         while not self._auto_stop.wait(1.0 / self._auto_hz):
             try:
+                self._battery_tick()
                 need = self.automation.active()
                 with self.lock:
                     eng = self.engine
@@ -154,6 +167,52 @@ class Controller:
                         self.auto_base = False
             except Exception as e:  # keyboard unplugged etc.: keep trying
                 print("automation:", repr(e))
+
+    # -- battery saver: on battery the PC stops drawing and the keyboard shows its own effect
+    def _battery_saving(self) -> bool:
+        self._on_battery = self.automation.probes["on_battery"]()
+        return bool(self._on_battery) and self.automation.cfg["battery"]["enabled"]
+
+    def _battery_tick(self):
+        saving = self._battery_saving()
+        with self.lock:
+            if saving and not self._saving:
+                self._saving = True
+                self._pause_for_battery()
+            elif not saving and self._saving:
+                self._saving = False
+                self._resume_after_battery()
+
+    def _pause_for_battery(self):
+        eng = self.engine
+        if self.apps:
+            self.battery_paused = {"apps": self.apps.profile}
+            self.stop_apps()
+            eng.stop()
+        elif eng.effect is not None and not (self.auto_base and eng.effect.name == "emulate"):
+            self.battery_paused = {"effect": eng.effect.name, "params": dict(eng.params),
+                                   "overrides": dict(eng.overrides)}
+            eng.stop()  # the remembered live effect (settings) stays, so a restart brings it back too
+
+    def _resume_after_battery(self):
+        p, self.battery_paused = self.battery_paused, None
+        if not p:
+            return
+        if "apps" in p:
+            self.start_apps(p["apps"])
+        else:
+            self.engine.overrides.update(p["overrides"])
+            self.engine.run(p["effect"], **p["params"])
+        self.auto_base = False
+
+    def _lighting_chosen(self):
+        """The user picked the lighting: nothing the battery saver paused comes back over it."""
+        self.battery_paused = None
+
+    def battery_status(self) -> dict:
+        p = self.battery_paused
+        return {"saver": self.automation.cfg["battery"]["enabled"], "on_battery": self._on_battery,
+                "paused": None if not p else "app profiles" if "apps" in p else p["effect"]}
 
     def _sync_key_hook(self):
         """Global key hook only while the heatmap is counting."""
@@ -218,6 +277,7 @@ class Controller:
         if effect not in EFFECTS:
             raise ValueError(f"unknown effect {effect!r}; choose from {list(EFFECTS)}")
         self.stop_apps()
+        self._lighting_chosen()
         run_params = dict(params or {})
         if effect == "heatmap" and "counts" not in run_params:
             run_params["counts"] = self.heatmap.counts()
@@ -229,6 +289,7 @@ class Controller:
 
     def stop_live(self) -> dict:
         self.stop_apps()
+        self._lighting_chosen()
         self.remember_live(None)
         self.active_profile = None
         return self.engine.stop()
@@ -238,6 +299,7 @@ class Controller:
         running on top of the new one; any other live effect ends (hardware effects only show then)."""
         self.kb.apply_fields(bytearray(CONFIG_LEN), **fields)  # validate before touching the stream
         self.stop_apps()
+        self._lighting_chosen()
         eng = self.engine
         keep = (eng.effect.name, dict(eng.params)) if (
             eng.effect is not None and uses_stored_effect(eng.effect.name, eng.params)) else None
@@ -275,6 +337,7 @@ class Controller:
             hw = {"mode": "custom"}  # a per-key layout on its own means "show these colours"
         live = p.get("live")
         self.stop_apps()
+        self._lighting_chosen()
         self.engine.pause()
         try:
             if hw:
@@ -291,22 +354,35 @@ class Controller:
         return {"applied": p["name"], "live": self.engine.status()}
 
     def startup(self):
-        """Apply the configured start-up action (used by the GUI / --background)."""
+        """Apply the configured start-up action (used by the GUI / --background). On battery with the
+        saver on, it waits until the PC is plugged in."""
         s = self.settings
         try:
+            want = None
             if s.get("startup") == "apps" or (s.get("apps") or {}).get("enabled"):
-                self.start_apps(s["apps"])
+                want = {"apps": s["apps"]}
             elif s.get("startup") == "restore" and s.get("last_live"):
-                self.engine.run(s["last_live"]["effect"], **s["last_live"].get("params", {}))
+                want = {"effect": s["last_live"]["effect"], "params": s["last_live"].get("params", {}),
+                        "overrides": {}}
+            if want and self._battery_saving():
+                with self.lock:
+                    self._saving, self.battery_paused = True, want
+            elif want and "apps" in want:
+                self.start_apps(want["apps"])
+            elif want:
+                self.engine.run(want["effect"], **want["params"])
         except Exception as e:  # never block start-up on a bad saved setting
             print("startup action failed:", repr(e))
 
     # -- preview of what the keyboard shows
     def frame(self) -> dict:
         eng = self.engine
-        if eng.last is not None:
-            return {"source": "live", "effect": eng.effect.name if eng.effect else None,
-                    "colors": {n: _hex(c) for n, c in zip(NAMES, eng.last)}}
+        last = eng.last
+        if last is not None:
+            if self._frame[0] is not last:  # the engine only replaces `last` when the picture changed
+                self._frame = (last, {"source": "live", "effect": eng.effect.name if eng.effect else None,
+                                      "colors": {n: _hex(c) for n, c in zip(NAMES, last)}})
+            return self._frame[1]
         info = self.info()
         if info["mode_id"] == MODES["custom"]:
             return {"source": "custom", "mode": info["mode"], "colors": self.kb.get_custom(0)}
@@ -373,23 +449,35 @@ def make_handler(ctl: Controller):
                 self._send(200, f.read(), mimetypes.guess_type(full)[0] or "application/octet-stream")
             return True
 
-        def _stream(self, fps: float = 60.0):
-            """Server-Sent Events: push the preview frame ~60x/s until the client disconnects."""
+        def _stream(self, fps: float = 60.0, heartbeat_s: float = 1.0):
+            """Server-Sent Events: push the preview frame whenever it changes (checked ~60x/s) until the
+            client disconnects. While the picture is still, a heartbeat notices a closed window."""
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             period = 1.0 / fps
+            last, beat = None, time.monotonic()
+            with _STREAMS_LOCK:
+                _STREAMS["open"] += 1
             try:
                 while True:
                     t = time.monotonic()
                     with ctl.lock:
                         f = ctl.frame()
-                    self.wfile.write(b"data: " + json.dumps(f).encode() + b"\n\n")
+                    if f != last:
+                        self.wfile.write(b"data: " + json.dumps(f).encode() + b"\n\n")
+                        last, beat = f, t
+                    elif t - beat >= heartbeat_s:
+                        self.wfile.write(b": still\n\n")
+                        beat = t
                     self.wfile.flush()
                     time.sleep(max(0.0, period - (time.monotonic() - t)))
             except (ConnectionError, OSError):
                 return  # browser closed the stream
+            finally:
+                with _STREAMS_LOCK:
+                    _STREAMS["open"] -= 1
 
         def do_GET(self):
             u = urlparse(self.path)
@@ -405,6 +493,7 @@ def make_handler(ctl: Controller):
                     if u.path == "/status":
                         st = engine.status()
                         st["timer"] = ctl.automation.timer_status()
+                        st["battery"] = ctl.battery_status()
                         st["apps"] = ({"foreground": ctl.apps.app,
                                        "rule": (ctl.apps.current or {}).get("match", "default")}
                                       if ctl.apps else None)
@@ -503,6 +592,7 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.set_hardware(**req))
                     if p == "/custom":
                         ctl.stop_apps()
+                        ctl._lighting_chosen()
                         engine.pause()  # the custom-key preview stays on screen while we store it
                         ctl.remember_live(None)
                         ctl.active_profile = None
@@ -525,6 +615,7 @@ def make_handler(ctl: Controller):
                     if p == "/apps":
                         cfg = {**ctl.settings.get("apps", {}), **req}
                         ctl.update_settings({"apps": cfg})
+                        ctl._lighting_chosen()
                         if cfg.get("enabled", True):
                             ctl.start_apps(cfg)
                             return self._send(200, {"apps": "running", "rules": len(cfg.get("rules", []))})
@@ -563,6 +654,7 @@ def make_handler(ctl: Controller):
                         if not os.path.isfile(os.path.join(d, "config.bin")):
                             raise ValueError("no lighting backup found")
                         ctl.stop_apps()
+                        ctl._lighting_chosen()
                         engine.stop()
                         for cs in range(3):
                             with open(os.path.join(d, f"custom{cs}.bin"), "rb") as f:

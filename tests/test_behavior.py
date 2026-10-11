@@ -341,7 +341,9 @@ class ServerAPI(unittest.TestCase):
         self.assertEqual(self.call("/frame")[1]["colors"]["Esc"], "000000")
 
     def test_preview_stream_pushes_frames_at_a_smooth_rate(self):
-        # the UI preview must be fast enough for rain drops / ripples (it was ~11 fps and looked broken)
+        # the UI preview must be fast enough for rain drops / ripples (it was ~11 fps and looked broken).
+        # A moving picture: a still one is sent once (tests/test_feature_battery.py)
+        self.call("/run", {"effect": "rainbow", "params": {"speed": 0.5}})
         req = urllib.request.urlopen(f"http://127.0.0.1:{self.port}/stream", timeout=5)
         t0, events = time.monotonic(), 0
         while time.monotonic() - t0 < 1.0:

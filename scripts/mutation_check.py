@@ -1,5 +1,8 @@
 """Re-introduce known past bugs one at a time and check the behaviour suite catches each one.
-Restores every file afterwards. Run from the project root."""
+Restores every file afterwards. Run from the project root:
+
+    python scripts/mutation_check.py [text ...]   (only the mutants whose name contains one of the texts)
+A mutant may end with {"only": "win32"}: a bug that only exists on that platform."""
 import os, shutil, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -120,8 +123,8 @@ MUTANTS = {
         '        self.update_settings({"profiles": existing + [p]})\n        return p',
         '        self.update_settings({"profiles": existing + [p]})\n        self.apply_profile(p)\n        return p'),
     'apply: live effect stopped first (old lighting flashes)': ('evision_rgb/server.py',
-        '        self.stop_apps()\n        self.engine.pause()\n        try:\n            if hw:',
-        '        self.stop_apps()\n        self.engine.stop()\n        try:\n            if hw:'),
+        '        self._lighting_chosen()\n        self.engine.pause()\n        try:\n            if hw:',
+        '        self._lighting_chosen()\n        self.engine.stop()\n        try:\n            if hw:'),
     'apply: live layers never resume after storing (stream left paused)': ('evision_rgb/effects.py',
         'self.stream.paused = False', 'self.stream.paused = self.stream.paused'),
     'apply: custom colours written in a second transaction (stale frame)': ('evision_rgb/keyboard.py',
@@ -170,6 +173,60 @@ MUTANTS = {
         '            elif False:'),
     'local API: any Host name accepted (DNS rebinding)': ('evision_rgb/server.py',
         '            if host is not None and host.lower() not in ours:', '            if False:'),
+    # -- battery saver & CPU savings
+    'still frames: unchanged frames resent every frame (CPU, USB)': ('evision_rgb/effects.py',
+        "            if frame != sent:  # an unchanged frame is not resent: the stream's keep-alive holds it",
+        '            if True:'),
+    'still frames: changed frames never sent': ('evision_rgb/effects.py',
+        "            if frame != sent:  # an unchanged frame is not resent: the stream's keep-alive holds it",
+        '            if sent is None:'),
+    'still frames: drawing never slows down': ('evision_rgb/effects.py',
+        '            self.idle = now - changed >= self.idle_after', '            self.idle = False'),
+    'still frames: drawing slowed while moving (choppy)': ('evision_rgb/effects.py',
+        '            if self.idle:  # slow rate; a key press or an overlay ends the wait at once', '            if True:'),
+    'still frames: a key press does not wake a still effect': ('evision_rgb/effects.py',
+        '            self.callback(name)\n            wake_engines()', '            self.callback(name)'),
+    'still frames: a live key colour does not wake a still effect': ('evision_rgb/effects.py',
+        '                self.run("solid", color="000000")\n            self.wake()', '                self.run("solid", color="000000")'),
+    'still frames: stop waits for the slow idle frame': ('evision_rgb/effects.py',
+        '                self._stop.set()\n                self.wake()', '                self._stop.set()'),
+    'still frames: full-speed frames paced by Event.wait (30 fps on Windows)': ('evision_rgb/effects.py',
+        '                time.sleep(max(0.0, period - (time.monotonic() - now)))',
+        '                self._wake.wait(max(0.0, period - (time.monotonic() - now)))', {"only": "win32"}),
+    'still frames: a notification does not wake a still effect': ('evision_rgb/automation.py',
+        '"n": max(1, int(flashes)), "period": max(0.05, float(period))})\n        wake_engines()',
+        '"n": max(1, int(flashes)), "period": max(0.05, float(period))})'),
+    'preview: still pictures resent to the window 60x/s': ('evision_rgb/server.py',
+        '                    if f != last:\n                        self.wfile.write(b"data: "',
+        '                    if True:\n                        self.wfile.write(b"data: "'),
+    'preview: no heartbeat (a closed window keeps its stream thread)': ('evision_rgb/server.py',
+        '                    elif t - beat >= heartbeat_s:', '                    elif False:'),
+    'battery: unplugging pauses nothing': ('evision_rgb/server.py',
+        '            if saving and not self._saving:', '            if False:'),
+    'battery: plugging in brings nothing back': ('evision_rgb/server.py',
+        '        p, self.battery_paused = self.battery_paused, None\n        if not p:',
+        '        p, self.battery_paused = None, None\n        if not p:'),
+    'battery: the saver switch is ignored': ('evision_rgb/server.py',
+        '        return bool(self._on_battery) and self.automation.cfg["battery"]["enabled"]',
+        '        return bool(self._on_battery)'),
+    'battery: a PC without a battery counts as on battery': ('evision_rgb/server.py',
+        '        return bool(self._on_battery) and self.automation.cfg["battery"]["enabled"]',
+        '        return self._on_battery is not False and self.automation.cfg["battery"]["enabled"]'),
+    'battery: an effect you chose on battery is replaced when plugging in': ('evision_rgb/server.py',
+        'comes back over it."""\n        self.battery_paused = None', 'comes back over it."""'),
+    'battery: start-up on battery starts the effect anyway': ('evision_rgb/server.py',
+        '            if want and self._battery_saving():', '            if False:'),
+    'battery: the indicator mirror is paused as if it were your effect': ('evision_rgb/server.py',
+        '        elif eng.effect is not None and not (self.auto_base and eng.effect.name == "emulate"):',
+        '        elif eng.effect is not None:'),
+    'battery: live key colours lost over a pause': ('evision_rgb/server.py',
+        '            self.engine.overrides.update(p["overrides"])\n            self.engine.run',
+        '            self.engine.run'),
+    'battery: app profiles keep running on battery': ('evision_rgb/server.py',
+        '        if self.apps:\n            self.battery_paused = {"apps": self.apps.profile}',
+        '        if False:\n            self.battery_paused = {"apps": self.apps.profile}'),
+    'battery: the setting accepts anything': ('evision_rgb/automation.py',
+        '    if not isinstance(cfg["battery"]["enabled"], bool):', '    if False:'),
 }
 
 def drop_bytecode(path):
@@ -182,10 +239,11 @@ def drop_bytecode(path):
             os.remove(os.path.join(cache, f))
 
 
-def suite():
-    """Run the behaviour suite without writing bytecode (mutated code must never be cached)."""
-    return subprocess.run([PY, "-B", "-m", "unittest"], cwd=os.path.join(ROOT, "tests"), capture_output=True,
-                          text=True, timeout=300, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+def suite(failfast=False):
+    """Run the behaviour suite without writing bytecode (mutated code must never be cached). failfast: stop at
+    the first failure (a mutant only needs one failing test to count as caught)."""
+    return subprocess.run([PY, "-B", "-m", "unittest"] + (["-f"] if failfast else []), cwd=os.path.join(ROOT, "tests"),
+                          capture_output=True, text=True, timeout=300, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
 
 
 def failures(r):
@@ -197,8 +255,14 @@ if base.returncode != 0:
     print("baseline suite FAILS, nothing to measure:", ", ".join(failures(base)[:5]) or base.stderr[-500:])
     sys.exit(1)
 
+SELECT = [a.lower() for a in sys.argv[1:]]
 failed_to_catch = []
-for name, (rel, old, new) in MUTANTS.items():
+for name, (rel, old, new, *opt) in MUTANTS.items():
+    if SELECT and not any(s in name.lower() for s in SELECT):
+        continue
+    only = (opt[0] if opt else {}).get("only")
+    if only and not sys.platform.startswith(only):
+        print(f"[n/a] {name}: {only} only"); continue
     path = os.path.join(ROOT, rel)
     src = open(path, encoding="utf-8").read()
     if old not in src:
@@ -209,7 +273,7 @@ for name, (rel, old, new) in MUTANTS.items():
         drop_bytecode(path)
         with open(path, "w", encoding="utf-8", newline=newline) as f:
             f.write(src.replace(old, new, 1))
-        r = suite()
+        r = suite(failfast=True)
         caught = r.returncode != 0
         print(f"[{'caught' if caught else 'MISSED'}] {name}" + (f"  <- {', '.join(failures(r)[:3])}" if caught else ""),
               flush=True)

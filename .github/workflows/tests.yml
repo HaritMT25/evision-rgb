@@ -16,5 +16,6 @@ jobs:
       - name: Behaviour + unit tests (firmware simulator, no keyboard needed)
         working-directory: tests
         run: python -m unittest -v
-      - name: Mutation check (the suite must catch known past bugs)
+      - name: Mutation check (the suite must catch known past bugs; once per OS)
+        if: matrix.python == '3.13'
         run: python scripts/mutation_check.py

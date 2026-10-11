@@ -31,6 +31,11 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
   import other people's. Imports are validated and change nothing until you apply them.
 - **Automation**: Caps Lock / mic-mute indicator keys, notification flashes, a number-row timer, dimming when idle or
   locked, a night schedule, and shortcut hints (hold Ctrl and the shortcuts of the app in front light up).
+- **Battery saver**: when a laptop runs on battery, live effects, layer stacks and app profiles pause and the keyboard
+  shows its own built-in effect, which costs the PC nothing. Plugging in brings back exactly what was running.
+  Indicators, notifications and the timer keep working.
+- **Light on CPU**: a picture that doesn't change isn't redrawn 60 times a second or resent to the keyboard (only a
+  keep-alive is), and the app window's preview only receives frames that changed.
 - **App profiles**: lighting follows the program in front (Spotify → music, VS Code → typing ripples, a game → a layer stack).
 - **Macro pads** (AJAZZ AKP03 / AKP153 "stream docks"): draws icons on the pad's screen keys and runs an action per
   key or knob turn. Actions include lighting profiles, effects, the layer stack, keyboard brightness, media keys,
@@ -79,7 +84,8 @@ with Keyboard() as kb:
 ## HTTP API & MCP
 `GET /status /info /keys /effects /modes /frame /stream /custom /settings /profiles /profiles/export` ·
 `POST /effect /custom /run /keys /clear /stop /apps /notify /timer /automation /heatmap /profiles/import /profiles/apply /restore`.
-See `evision_rgb/server.py`.
+`GET /status` includes `battery` (`on_battery`, `saver`, `paused`); `POST /automation {"battery": {"enabled": false}}`
+switches the battery saver off. See `evision_rgb/server.py`.
 
 A layer stack is an ordinary live effect:
 ```json
@@ -102,6 +108,7 @@ behaviour, including its quirks. A mutation check proves the suite catches real 
 ```powershell
 cd tests; python -m unittest                    # behaviour + unit tests, no keyboard needed
 python ..\scripts\mutation_check.py              # each known past bug must make the suite fail
+python ..\scripts\mutation_check.py battery      # only the mutants whose name contains "battery"
 $env:AK820_HW=1; python -m unittest test_hardware   # optional checks on a real keyboard (restores state)
 ```
 The desktop UI can be developed and tested against the simulator too:

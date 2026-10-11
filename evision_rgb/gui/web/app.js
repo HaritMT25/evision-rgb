@@ -155,6 +155,7 @@ function showFrame(f) {
   if (S.tab === "custom" && (S.dirty || Object.keys(S.custom).length)) return;  // editor shows local colours
   colorKeys(f.colors);
   S.animated = !!f.animated;
+  S.frame = f;  // a still picture is sent once: the status loop keeps its caption current
   const now = Date.now();
   if (now - (S.captionAt || 0) > 250) { setCaption(f); S.captionAt = now; }
 }
@@ -197,7 +198,8 @@ function setCaption(f) {
   const st = S.status || {};
   let t;
   if (S.tab === "custom" && S.dirty) t = "<b>Preview</b> of unsaved custom colours";
-  else if (f.source === "live") t = `<b>Live:</b> ${modeLabel(f.effect)} · ${st.fps || 0} fps` + (st.apps ? ` · app profile: ${st.apps.foreground || "?"} → ${st.apps.rule}` : "");
+  else if (f.source === "live") t = `<b>Live:</b> ${modeLabel(f.effect)} · ` + (st.idle ? "still (drawn less often to save CPU)" : `${st.fps || 0} fps`)
+    + (st.apps ? ` · app profile: ${st.apps.foreground || "?"} → ${st.apps.rule}` : "");
   else if (f.source === "custom") t = `<b>Keyboard effect:</b> Custom (group ${(S.settings.custom_active || 0) + 1})`;
   else t = `<b>Keyboard effect:</b> ${modeLabel(f.mode)}` + (f.animated ? ' <span class="hint">— preview is an approximation of the keyboard\'s own animation</span>' : "");
   $("#caption").innerHTML = t;
@@ -209,12 +211,16 @@ async function statusLoop() {
     S.status = await api("/status");
     const dot = $("#statusDot");
     dot.className = "dot " + (S.status.live ? "live" : "ok");
-    $("#statusText").textContent = S.status.live ? `live: ${modeLabel(S.status.effect)}` : "keyboard connected";
+    const bat = S.status.battery;
+    $("#statusText").textContent = S.status.live ? `live: ${modeLabel(S.status.effect)}`
+      : bat && bat.paused ? `battery saver: ${modeLabel(bat.paused)} paused` : "keyboard connected";
     $$(".card").forEach(c => c.classList.toggle("on", S.status.effect === c.dataset.effect && !S.status.apps));
     markLayersRunning();
     const err = S.status.stream_error || S.status.audio_error;
     if (err) $("#statusText").textContent += " · " + err.slice(0, 60);
     renderTimer();
+    renderBattery();
+    if (S.frame && Date.now() - (S.captionAt || 0) > 900) { setCaption(S.frame); S.captionAt = Date.now(); }
     if (S.status.apps) $("#appsNow").textContent = `now: ${S.status.apps.foreground} → ${S.status.apps.rule}`;
     else $("#appsNow").textContent = "";
   } catch (e) {
@@ -684,6 +690,14 @@ async function initAutomation() {
       hm(await api("/heatmap", { clear: true }));
   };
   setInterval(async () => { if (S.tab === "auto") hm(await api("/heatmap").catch(() => ({ enabled: false, total: 0 }))); }, 5000);
+}
+function renderBattery() {
+  const b = S.status && S.status.battery, el = $("#batStatus");
+  if (!b || !el) return;
+  el.textContent = b.on_battery == null ? "This PC has no battery, so nothing is paused."
+    : !b.on_battery ? "Plugged in. On battery the keyboard shows its own effect, which costs the PC nothing."
+    : b.paused ? `On battery: ${modeLabel(b.paused)} is paused and comes back when you plug in.`
+    : b.saver ? "On battery. Anything you start now keeps running." : "On battery (battery saver is off).";
 }
 function renderTimer() {
   const t = S.status && S.status.timer;

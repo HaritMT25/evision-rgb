@@ -183,6 +183,9 @@
           </div>
           <div>
             <h2>Power &amp; schedule</h2>
+            <div class="row" style="margin-bottom:4px"><label class="toggle"><input type="checkbox" data-a="battery.enabled"><span></span></label>
+              Battery saver: pause live effects on battery</div>
+            <div class="hint" id="batStatus" style="margin:0 0 10px 52px"></div>
             <div class="row" style="margin-bottom:8px"><label class="toggle"><input type="checkbox" data-a="lock.enabled"><span></span></label>
               When the PC is locked, set lights to <input type="range" style="width:120px" min="0" max="1" step="0.05" data-a="lock.brightness"><output data-o="lock.brightness"></output></div>
             <div class="row" style="margin-bottom:8px"><label class="toggle"><input type="checkbox" data-a="idle.enabled"><span></span></label>
@@ -197,8 +200,8 @@
               Count key presses <span class="hint">(off by default; stores only per-key totals, never text)</span></div>
             <div class="hint" id="hmStats" style="margin:0 0 8px 52px"></div>
             <div class="row" style="margin-left:52px"><button class="btn" id="hmShow">Show heatmap</button><button class="btn" id="hmClear">Clear</button></div>
-            <p class="hint" style="margin-top:14px">While an indicator, timer or dimming is active on top of a built-in effect, the app shows a live
-              copy of your stored colours (built-in animations pause) and hands the keyboard back afterwards.</p>
+            <p class="hint" style="margin-top:14px">While an indicator, timer or dimming is active on top of a built-in effect, the app draws a
+              copy of that effect underneath (it keeps animating) and hands the keyboard back afterwards.</p>
           </div>
         </div>
       </div>
