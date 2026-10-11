@@ -324,3 +324,49 @@ def _make_emulate(mode=6, brightness=4, speed=2, direction=0, random=0, color="f
 
 _make_emulate.name = "emulate"
 EFFECTS["emulate"] = _make_emulate
+
+
+# ---------------------------------------------------------------------------------------------
+# 'keyboard' layer: whatever effect is stored on the keyboard, emulated (the app knows the config)
+# ---------------------------------------------------------------------------------------------
+_STORED = {"fn": None}  # fn() -> _make_emulate params of the stored effect; registered by server.Controller
+
+
+def set_stored_effect(fn):
+    """Register (None clears) where the keyboard's stored effect comes from; returns the previous source."""
+    prev, _STORED["fn"] = _STORED["fn"], fn
+    return prev
+
+
+class StoredEffect(Effect):
+    """The keyboard's own stored (built-in) effect, emulated on this PC (exact when the firmware is
+    available). Use it as the bottom layer to put live layers on top of a built-in effect. Read from the
+    keyboard when the effect starts; only available inside the app / `evrgb serve`."""
+    name = "keyboard"
+    fps = 60
+
+    def __init__(self):
+        self.source = _STORED["fn"]
+        if self.source is None:
+            raise ValueError("the keyboard's stored effect is only known while the EVision RGB app (or `evrgb serve`) runs")
+        self.emu = None
+        self.raw = False
+
+    def _emulator(self):
+        if self.emu is None:
+            self.emu = _make_emulate(**self.source())
+            self.raw = getattr(self.emu, "raw", False)
+        return self.emu
+
+    def start(self):
+        self._emulator().start()
+
+    def stop(self):
+        if self.emu is not None:
+            self.emu.stop()
+
+    def render(self, t):
+        return self._emulator().render(t)
+
+
+EFFECTS["keyboard"] = StoredEffect

@@ -9,6 +9,7 @@ import colorsys
 import math
 import threading
 import time
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -22,6 +23,7 @@ X = np.array([KEYS[n][1] for n in NAMES])
 Y = np.array([KEYS[n][2] for n in NAMES])
 N = len(NAMES)
 INDEX = {n.lower(): i for i, n in enumerate(NAMES)}
+GAMMA = 2.2  # effects render perceptual colours; LEDs get colour ** GAMMA
 
 
 def rgbf(c) -> np.ndarray:
@@ -44,7 +46,7 @@ def hsv(h: np.ndarray, s=1.0, v=1.0) -> np.ndarray:
     return out
 
 
-def to_frame(colors: np.ndarray, gamma: float = 2.2) -> bytes:
+def to_frame(colors: np.ndarray, gamma: float = GAMMA) -> bytes:
     c = np.clip(colors, 0.0, 1.0) ** gamma
     frame = np.zeros((MAP_SIZE, 3), dtype=np.uint8)
     frame[SLOTS] = (c * 255 + 0.5).astype(np.uint8)
@@ -410,6 +412,8 @@ class Ambient(Effect):
                  capture_fps: float = 20, brightness: float = 1.0, source=None):
         if mode not in ("map", "average"):
             raise ValueError("mode must be 'map' or 'average'")
+        if source is not None and not callable(source):  # params can come from shared profile files
+            raise ValueError("source must be a function returning an image")
         self.mode, self.sat, self.smooth = mode, float(saturation), float(smooth)
         self.period, self.brightness = 1.0 / max(1.0, float(capture_fps)), float(brightness)
         self.threaded = source is None  # real screen grabs (~40 ms) run off the render thread
@@ -507,7 +511,118 @@ class SystemMonitor(Effect):
         return out
 
 
-EFFECTS = {cls.name: cls for cls in (Solid, Mirror, Rainbow, Breathing, Gradient, Reactive, Music, Ambient, SystemMonitor)}
+BLENDS = {
+    "normal": lambda below, top: top,
+    "add": lambda below, top: np.minimum(below + top, 1.0),
+    "max": np.maximum,
+    "multiply": lambda below, top: below * top,
+    "screen": lambda below, top: 1 - (1 - below) * (1 - top),
+}
+MAX_LAYERS = 16
+LAYER_FIELDS = ("effect", "params", "keys", "blend", "opacity", "enabled", "name")
+
+
+@dataclass
+class Layer:
+    effect: Effect
+    mask: np.ndarray | None  # (N,) bool; None = every key
+    blend: object
+    opacity: float
+    enabled: bool
+
+
+class Layers(Effect):
+    """Stack live effects like layers in an image editor, bottom first. Each layer: effect + params,
+    keys (where it shows; default every key), blend (normal, add, max, multiply, screen), opacity 0..1,
+    enabled. Effect "keyboard" is the keyboard's own stored effect, e.g.
+    [{"effect": "keyboard"}, {"effect": "solid", "params": {"color": "ff0000"}, "keys": ["W", "A", "S", "D"]},
+     {"effect": "reactive", "params": {"base": "000000"}, "blend": "screen"}]"""
+    name = "layers"
+    DEFAULT = [{"effect": "rainbow", "params": {"brightness": 0.6}},
+               {"effect": "reactive", "params": {"base": "000000"}, "blend": "screen"}]
+
+    def __init__(self, layers: list | None = None):
+        specs = self.DEFAULT if layers is None else layers
+        if not isinstance(specs, list) or not specs:
+            raise ValueError('layers must be a non-empty list like [{"effect": "rainbow"}, ...]')
+        if len(specs) > MAX_LAYERS:
+            raise ValueError(f"at most {MAX_LAYERS} layers")
+        self.stack = [self._build(n, spec) for n, spec in enumerate(specs, 1)]
+        self.fps = max([getattr(L.effect, "fps", 60) for L in self.stack if L.enabled] or [5])
+        self.audio = next((L.effect.audio for L in self.stack if L.enabled and hasattr(L.effect, "audio")), None)
+        self._started: list[Effect] = []
+
+    @staticmethod
+    def _build(n: int, spec) -> Layer:
+        where = f"layer {n}"
+        if not isinstance(spec, dict):
+            raise ValueError(f'{where}: must be an object like {{"effect": "rainbow"}}')
+        unknown = sorted(set(spec) - set(LAYER_FIELDS))
+        if unknown:
+            raise ValueError(f"{where}: unknown field(s) {unknown}; allowed: {list(LAYER_FIELDS)}")
+        name = spec.get("effect")
+        if name == "layers":
+            raise ValueError(f"{where}: layers cannot be nested")
+        if not isinstance(name, str) or name not in EFFECTS:
+            raise ValueError(f"{where}: unknown effect {name!r}; choose from {sorted(set(EFFECTS) - {'layers'})}")
+        blend = spec.get("blend", "normal")
+        if blend not in BLENDS:
+            raise ValueError(f"{where}: unknown blend {blend!r}; choose from {list(BLENDS)}")
+        opacity = spec.get("opacity", 1.0)
+        if isinstance(opacity, bool) or not isinstance(opacity, (int, float)) or not 0 <= opacity <= 1:
+            raise ValueError(f"{where}: opacity must be a number from 0 to 1")
+        enabled = spec.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError(f"{where}: enabled must be true or false")
+        if not isinstance(spec.get("name", ""), str):
+            raise ValueError(f"{where}: name must be text")
+        keys, mask = spec.get("keys"), None
+        if keys is not None:
+            if not isinstance(keys, list):
+                raise ValueError(f"{where}: keys must be a list of key names")
+            mask = np.zeros(N, bool)
+            for key in keys:
+                i = INDEX.get(str(key).lower())
+                if i is None:
+                    raise ValueError(f"{where}: unknown key {key!r}")
+                mask[i] = True
+        params = spec.get("params") or {}
+        if not isinstance(params, dict):
+            raise ValueError(f"{where}: params must be an object")
+        try:
+            eff = EFFECTS[name](**params)
+        except (TypeError, ValueError, KeyError) as e:
+            raise ValueError(f"{where} ({name}): {e}") from e
+        return Layer(eff, mask, BLENDS[blend], float(opacity), enabled)
+
+    def start(self):
+        for L in self.stack:
+            if L.enabled:  # a switched-off music/ambient layer must not capture anything
+                L.effect.start()
+                self._started.append(L.effect)
+
+    def stop(self):
+        for eff in self._started:
+            eff.stop()
+        self._started = []
+
+    def render(self, t):
+        out = np.zeros((N, 3))
+        for L in self.stack:
+            if not L.enabled:
+                continue
+            c = np.clip(np.asarray(L.effect.render(t), dtype=float), 0.0, 1.0)
+            if getattr(L.effect, "raw", False):  # LED values (exact firmware engine) -> perceptual like the rest
+                c = c ** (1 / GAMMA)
+            mixed = L.blend(out, c)
+            if L.opacity < 1:
+                mixed = out + (mixed - out) * L.opacity
+            out = mixed if L.mask is None else np.where(L.mask[:, None], mixed, out)
+        return out
+
+
+EFFECTS = {cls.name: cls for cls in (Solid, Mirror, Rainbow, Breathing, Gradient, Reactive, Music, Ambient, SystemMonitor,
+                                     Layers)}
 
 
 # ---------------------------------------------------------------------------- engine
@@ -536,6 +651,7 @@ class Engine:
         with self.lock:
             self.stop_effect()
             self._ensure_stream()
+            self.stream.paused = False  # resume after pause() (e.g. a profile stored first, then its live part)
             self.effect = eff
             self.params = dict(params)
             self._stop = threading.Event()
@@ -551,17 +667,20 @@ class Engine:
         while not stop.is_set():
             t = time.monotonic() - t0
             colors = np.array(eff.render(t), dtype=float)
-            with self.lock:
-                for i, c in self.overrides.items():
-                    colors[i] = c
+            # no engine lock in here: stop() holds it while it waits for this thread to finish
+            for i, c in dict(self.overrides).items():
+                colors[i] = c
             if self.post:
                 try:
                     colors = self.post(colors, time.monotonic())
                 except Exception:  # a broken overlay must never kill the render loop
                     pass
+            stream = self.stream
+            if stop.is_set() or stream is None:
+                break
             self.last = colors
-            self.stream.set_frame(to_frame(colors, 1.0 if getattr(eff, "raw", False) else 2.2))
-            self.stream.show()
+            stream.set_frame(to_frame(colors, 1.0 if getattr(eff, "raw", False) else GAMMA))
+            stream.show()
             frames += 1
             now = time.monotonic()
             if now - tl >= 1:

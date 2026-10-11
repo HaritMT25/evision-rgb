@@ -21,6 +21,7 @@
     <div class="profile-row">
       <select id="profileSel" class="redselect" title="Saved lighting profiles"></select>
       <button class="sqbtn" id="profileAdd" title="Save current lighting as a new profile">+</button>
+      <button class="sqbtn" id="profileImport" title="Import a shared profile (file or share code)">⇩</button>
     </div>
     <nav id="nav">
       <button data-tab="light" class="active">
@@ -98,6 +99,8 @@
               <button class="btn primary" id="cPaint">Paint selected</button>
               <button class="btn" id="cFill">All light</button>
               <button class="btn" id="cOff">All off</button>
+              <button class="btn" id="cUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+              <button class="btn" id="cRedo" title="Redo (Ctrl+Y)" disabled>↷ Redo</button>
             </div>
             <div class="row">
               <span class="hint">Presets:</span>
@@ -125,10 +128,27 @@
       <!-- live effects -->
       <div class="tab" id="tab-live">
         <div class="row" style="justify-content:space-between;margin-bottom:12px">
-          <h2 style="margin:0">Live effects <span class="hint">rendered by this PC at up to 60 fps · not saved on the keyboard</span></h2>
+          <div class="row">
+            <h2 style="margin:0">Live effects <span class="hint">rendered by this PC at up to 60 fps · not saved on the keyboard</span></h2>
+            <div class="seg" id="liveView"><button data-v="cards">Effects</button><button data-v="layers">Layer editor</button></div>
+          </div>
           <button class="btn primary" id="liveStop">Stop live (back to keyboard effect)</button>
         </div>
         <div class="cards" id="cards"></div>
+        <div id="layerEditor" style="display:none">
+          <div class="row" style="margin-bottom:10px">
+            <select class="inp" style="width:170px" id="lyAdd" title="Add a layer on top"></select>
+            <select class="inp" style="width:170px" id="lyTemplate" title="Start from an example stack"></select>
+            <button class="btn" id="lyUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+            <button class="btn" id="lyRedo" title="Redo (Ctrl+Y)" disabled>↷ Redo</button>
+            <span style="flex:1"></span>
+            <button class="btn" id="lySave" title="Save this stack (with the keyboard's effect) as a profile">Save as profile</button>
+            <button class="btn primary" id="lyStart">Start layers</button>
+          </div>
+          <p class="hint" style="margin:0 0 10px">The top of the list is the top layer. Select a layer, then click keys or drag a box on
+            the keyboard to choose where it shows (Shift/Ctrl adds). Changes apply live while the layers run.</p>
+          <div id="lyList"></div>
+        </div>
       </div>
 
       <!-- automation -->
@@ -227,6 +247,8 @@
 </div>
 <div id="toast"></div>
 <div id="modal"><div class="box"><h3 id="mTitle"></h3><div id="mBody"></div><div class="row" id="mBtns"></div></div></div>
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+<script src="ui/history.js"></script>
 <script src="ui/app.js"></script>
 </body>
 </html>

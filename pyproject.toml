@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evision-rgb"
-version = "0.2.0"
+version = "0.3.0"
 description = "Open-source RGB control for EVision-based keyboards (AJAZZ AK820 and other USB 320F devices): per-key lighting, live effects, music sync, desktop app, HTTP API and MCP server"
 readme = "README.md"
 license = "MIT"

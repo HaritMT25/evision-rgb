@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 try:  # mcp >= 2
@@ -98,9 +99,15 @@ def set_custom_colors(colors: dict[str, str], default: str = "000000", colorset:
 @mcp.tool()
 def run_live_effect(effect: str, params: dict | None = None) -> dict:
     """Start a host-rendered live effect (not saved; ends when stopped). effect: rainbow, breathing, gradient,
-    solid, reactive (typing ripples), music (audio visualiser of whatever is playing), sysmon (CPU/RAM bars).
+    solid, reactive (typing ripples), music (audio visualiser of whatever is playing), sysmon (CPU/RAM bars),
+    ambient (screen colours), layers (stack several effects).
     Example params: rainbow {"speed": 0.3}, breathing {"color": "ff0040", "period": 3},
-    music {"style": "bars"|"pulse"}, reactive {"base": "000010", "color": "ffffff"}."""
+    music {"style": "bars"|"vu"|"beat"|"ripple"|"pulse"}, reactive {"base": "000010", "color": "ffffff"},
+    layers {"layers": [{"effect": "keyboard"},
+                       {"effect": "solid", "params": {"color": "ff0000"}, "keys": ["W", "A", "S", "D"]},
+                       {"effect": "reactive", "params": {"base": "000000"}, "blend": "screen", "opacity": 0.8}]}
+    (bottom layer first; keys = where a layer shows, default all; blend normal|add|max|multiply|screen;
+    effect "keyboard" = the effect stored on the keyboard)."""
     return call("/run", {"effect": effect, "params": params or {}})
 
 
@@ -140,6 +147,33 @@ def cancel_timer() -> dict:
 def stop_live() -> dict:
     """Stop live control; the keyboard returns to its stored hardware effect."""
     return call("/stop", {})
+
+
+@mcp.tool()
+def list_profiles() -> list:
+    """Saved lighting profiles. Each stores a hardware effect, optional per-key colours and an optional
+    live effect or layer stack."""
+    return call("/profiles")
+
+
+@mcp.tool()
+def apply_profile(name: str) -> dict:
+    """Apply a saved lighting profile by name. It switches the stored effect, the custom colours and
+    the live layers in one go."""
+    return call("/profiles/apply", {"name": name})
+
+
+@mcp.tool()
+def export_profile(name: str) -> dict:
+    """Share code ("evrgb1:...") for a saved profile. Someone else can import it into EVision RGB."""
+    return call(f"/profiles/export?name={urllib.parse.quote(name)}&as=code")
+
+
+@mcp.tool()
+def import_profile(code: str) -> dict:
+    """Import a profile from a share code ("evrgb1:...") without applying it. Returns the name it was
+    saved under; it never replaces an existing profile."""
+    return call("/profiles/import", {"code": code})
 
 
 def main():

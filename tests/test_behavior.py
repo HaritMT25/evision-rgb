@@ -208,6 +208,30 @@ class LiveStreaming(unittest.TestCase):
         with self.assertRaises(KeyError):
             s.set("NumLock", "ffffff")
 
+    def test_stopping_an_effect_mid_frame_is_instant(self):
+        # stop() holds the engine lock while it waits for the render thread; if the render loop needs that
+        # lock too, every unlucky stop stalls 2 s and the thread then writes to a closed stream
+        import numpy as np
+        from evision_rgb import effects as E
+        rendering, finish = threading.Event(), threading.Event()
+
+        class Slow(E.Effect):
+            name = "slowprobe"
+
+            def render(self, t):
+                rendering.set()
+                finish.wait(1)
+                return np.zeros((E.N, 3))
+        E.EFFECTS["slowprobe"] = Slow
+        self.addCleanup(E.EFFECTS.pop, "slowprobe")
+        eng = E.Engine(self.k)
+        eng.run("slowprobe")
+        self.assertTrue(rendering.wait(2))
+        threading.Timer(0.05, finish.set).start()  # the frame finishes while stop() is waiting
+        t0 = time.monotonic()
+        eng.stop()
+        self.assertLess(time.monotonic() - t0, 1.0)
+
 
 # =============================================================================== layout
 class Layout(unittest.TestCase):
@@ -413,7 +437,7 @@ class Effects(unittest.TestCase):
         import numpy as np
         from evision_rgb.effects import EFFECTS, N
         for name, cls in EFFECTS.items():
-            if name in ("reactive", "music"):
+            if name in ("reactive", "music", "keyboard"):  # keyboard: needs the app's stored effect
                 continue
             c = np.array(cls().render(1.23))
             self.assertEqual(c.shape, (N, 3), name)

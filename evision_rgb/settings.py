@@ -25,8 +25,9 @@ DEFAULTS = {
     "custom_groups": [None, None, None],  # per-key layouts saved in the app (keyboard displays one)
     "custom_active": 0,
     "tray_hint_shown": False,
-    "heatmap_enabled": False,
-    "fw_time_scale": 1.0,            # calibration of exact effect emulation speed (1.0 = datasheet)       # typing heatmap is opt-in (privacy)
+    "heatmap_enabled": False,     # typing heatmap is opt-in (privacy)
+    "fw_time_scale": 1.0,         # calibration of exact effect emulation speed (1.0 = datasheet)
+    "layers_draft": None,         # the layer editor's current stack (list of layers), kept between sessions
 }
 
 

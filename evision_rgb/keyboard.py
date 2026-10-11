@@ -84,14 +84,18 @@ class Keyboard:
     def set_effect(self, mode: str | int | None = None, brightness: int | None = None,
                    speed: int | None = None, color=None, direction: int | None = None,
                    random: bool | None = None, colorset: int | None = None, variant: int | None = None,
-                   _refresh_custom: bool = True) -> dict:
-        """Persistent hardware effect (survives replug). Read-modify-write of the config block."""
+                   custom: Mapping[str | int, object] | None = None, _refresh_custom: bool = True) -> dict:
+        """Persistent hardware effect (survives replug). Read-modify-write of the config block.
+        custom: per-key colours for custom area 0, written in the same transaction (no stale frame)."""
         self.apply_fields(bytearray(CONFIG_LEN), mode, brightness, speed, color, direction, random, colorset, variant)
+        new_frame = bytes(frame_from(custom)) if custom is not None else None  # validate before any I/O
         cfg = bytearray(self.dev.read_config(CONFIG_LEN))
         self.apply_fields(cfg, mode, brightness, speed, color, direction, random, colorset, variant)
         if cfg[O_MODE] == MODES["custom"]:
             cfg[O_COLORSET] = 0  # firmware shows area 0 regardless; keep the byte consistent with that
-        frame = self.dev.read_custom(0) if cfg[O_MODE] == MODES["custom"] and _refresh_custom else None
+        frame = new_frame
+        if frame is None and cfg[O_MODE] == MODES["custom"] and _refresh_custom:
+            frame = self.dev.read_custom(0)
         self._commit(cfg, frame)
         return self._decode(bytes(cfg))
 

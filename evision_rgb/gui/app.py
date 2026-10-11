@@ -62,6 +62,26 @@ def _running(port: int) -> bool:
         return False
 
 
+class JsApi:
+    """Functions the page can call as window.pywebview.api.* (native dialogs WebView2 lacks)."""
+
+    def __init__(self, app: "App"):
+        self._app = app
+
+    def save_text(self, filename: str, text: str):
+        """Native Save dialog; writes `text` and returns the path (None if cancelled)."""
+        import webview
+        save = getattr(getattr(webview, "FileDialog", None), "SAVE", None) or webview.SAVE_DIALOG
+        res = self._app.window.create_file_dialog(save, save_filename=os.path.basename(filename),
+                                                  file_types=("Lighting profile (*.json)", "All files (*.*)"))
+        if not res:
+            return None
+        path = res if isinstance(res, str) else res[0]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+
 class App:
     def __init__(self, port: int, background: bool):
         self.port, self.background = port, background
@@ -118,8 +138,21 @@ class App:
         def run(effect):
             return lambda icon, item: self._safe(lambda: _post(self.port, "/run", {"effect": effect, "params": {}}))
 
+        def profile_names():
+            return [p.get("name") for p in (self.ctl.settings.get("profiles") or []) if p.get("name")][:25]
+
+        def apply(name):
+            return lambda icon, item: self._safe(lambda: _post(self.port, "/profiles/apply", {"name": name}, timeout=15))
+
+        def profile_items():
+            names = profile_names()
+            if not names:
+                return [pystray.MenuItem("No saved profiles yet", None, enabled=False)]
+            return [pystray.MenuItem(n, apply(n)) for n in names]
+
         menu = pystray.Menu(
             pystray.MenuItem("Open EVision RGB", lambda i, it: self.show(), default=True),
+            pystray.MenuItem("Profiles", pystray.Menu(profile_items)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Rainbow", run("rainbow")),
             pystray.MenuItem("Reactive typing", run("reactive")),
@@ -145,6 +178,19 @@ class App:
                         _log("tray icon promoted to the visible taskbar area")
                         return
             threading.Thread(target=promote, daemon=True).start()
+
+            def refresh_profiles():  # the Windows tray menu is built once: rebuild it when profiles change
+                shown = profile_names()
+                while not self.quitting:
+                    time.sleep(3)
+                    names = profile_names()
+                    if names != shown:
+                        shown = names
+                        try:
+                            icon.update_menu()
+                        except Exception:
+                            _log("tray menu:", traceback.format_exc())
+            threading.Thread(target=refresh_profiles, daemon=True).start()
             # first run: tell the user where the icon is (Windows 11 hides new tray icons under the ^ arrow)
             if not self.ctl.settings.get("tray_hint_shown"):
                 try:
@@ -172,7 +218,7 @@ class App:
         self.window = webview.create_window(
             "EVision RGB", f"http://127.0.0.1:{self.port}/", width=_window_size()[0], height=_window_size()[1],
             min_size=(1000, 660),
-            hidden=hidden, background_color="#0b0b0c")
+            hidden=hidden, background_color="#0b0b0c", js_api=JsApi(self))
         self.window.events.closing += self.on_closing
         webview.start(gui="edgechromium", private_mode=False,
                       storage_path=os.path.join(settings_mod.DIR, "webview"), icon=ICON_ICO)

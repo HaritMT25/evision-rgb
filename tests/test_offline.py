@@ -55,7 +55,7 @@ class Fields(unittest.TestCase):
 class Effects(unittest.TestCase):
     def test_all_render(self):
         for name, cls in EFFECTS.items():
-            if name in ("reactive", "music"):  # need key hook / audio device
+            if name in ("reactive", "music", "keyboard"):  # need key hook / audio device / the app's stored effect
                 continue
             e = cls()
             c = e.render(0.5)

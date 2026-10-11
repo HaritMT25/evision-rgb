@@ -14,6 +14,11 @@ POST /notify   {"color": "ff0000", "keys": ["Esc"], "flashes": 3, "period": 0.35
 POST /timer    {"minutes": 25, "label": "focus"} | {"cancel": true}                 number-row countdown
 GET|POST /automation  indicators (caps_lock, mic_mute), idle/lock dimming, night schedule
 POST /close_conflict {"pid": 123}              POST /restore {}  (restore pre-session backup)
+GET  /profiles                                 saved profiles (name, hardware mode, live effect)
+GET  /profiles/export?name=N[&as=code]         shareable file {"format": "evision-rgb-profile", ...} or share code
+POST /profiles/import  <file contents> | {"code": "evrgb1:..."}   validated, added under a free name, not applied
+POST /profiles/apply   {"name": "Gaming"}      hardware + custom colours in one write, then the live part
+Live effect "layers" stacks effects with key masks / blend modes; layer effect "keyboard" = the stored effect.
 """
 from __future__ import annotations
 
@@ -28,8 +33,9 @@ from urllib.parse import parse_qs, urlparse
 
 from . import settings as settings_mod
 from . import system
-from . import emulate  # registers the 'emulate' effect
+from . import emulate  # registers the 'emulate' and 'keyboard' effects
 from . import heatmap as heatmap_mod  # registers 'heatmap'
+from . import profiles
 from .effects import EFFECTS, Engine, NAMES
 from .keyboard import CONFIG_LEN
 from .layout import KEYS
@@ -41,8 +47,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUP_FILES = ("config.bin", "custom0.bin", "custom1.bin", "custom2.bin", "keymap.bin")
 
 
+MODE_NAME = {i: n for n, i in MODES.items()}
+
+
 def _hex(c) -> str:
     return "%02x%02x%02x" % tuple(int(max(0, min(1, v)) * 255 + 0.5) for v in c)
+
+
+def uses_stored_effect(effect: str, params: dict | None) -> bool:
+    """Is this live effect drawn on top of the keyboard's stored effect ('keyboard' layer)?"""
+    if effect == "keyboard":
+        return True
+    layers = (params or {}).get("layers") if effect == "layers" else None
+    return isinstance(layers, list) and any(isinstance(l, dict) and l.get("effect") == "keyboard" for l in layers)
 
 
 class Controller:
@@ -77,6 +94,7 @@ class Controller:
         threading.Thread(target=emulate.firmware_base, daemon=True).start()
         self._info_cache = (0.0, None)
         self._emu = (None, None, 0.0)  # (config key, emulator, t0) for the preview
+        emulate.set_stored_effect(self._emulation_params)  # 'keyboard' layers show the stored effect
         threading.Thread(target=self._automation_loop, daemon=True).start()
 
     def ensure_backup(self) -> str:
@@ -146,6 +164,9 @@ class Controller:
 
     def close(self):
         self._auto_stop.set()
+        prev = emulate.set_stored_effect(None)
+        if prev != self._emulation_params:  # another (newer) controller registered itself: keep it
+            emulate.set_stored_effect(prev)
         if self._emu[1] is not None:
             self._emu[1].stop()
         self._sync_key_hook_off()
@@ -180,6 +201,41 @@ class Controller:
 
     def remember_live(self, effect: str | None, params: dict | None = None):
         self.update_settings({"last_live": {"effect": effect, "params": params or {}} if effect else None})
+
+    # -- profiles (hardware effect + custom colours + live effect / layer stack)
+    def find_profile(self, name: str) -> dict | None:
+        return next((p for p in self.settings.get("profiles") or [] if p.get("name") == name), None)
+
+    def import_profile(self, doc) -> dict:
+        """Validate a shared file / share code and add it under a free name. Never touches the keyboard."""
+        p = profiles.read_doc(doc)
+        existing = list(self.settings.get("profiles") or [])
+        p["name"] = profiles.unique_name(p["name"], [x.get("name") for x in existing])
+        self.update_settings({"profiles": existing + [p]})
+        return p
+
+    def apply_profile(self, p: dict) -> dict:
+        """Store the hardware effect and custom colours in ONE keyboard transaction, then start the live
+        part. The current live frame stays on screen while storing, so the old lighting never shows."""
+        p = profiles.validate_profile(p)
+        hw = profiles.hardware_args(p.get("hardware") or {})
+        if p.get("custom") is not None and not hw:
+            hw = {"mode": "custom"}  # a per-key layout on its own means "show these colours"
+        live = p.get("live")
+        self.stop_apps()
+        self.engine.pause()
+        try:
+            if hw:
+                self.kb.set_effect(**hw, custom=p.get("custom"))
+            if live:
+                self.engine.run(live["effect"], **(live.get("params") or {}))
+        except Exception:
+            self.engine.stop()
+            raise
+        if not live:
+            self.engine.stop()  # hardware effects only show when not streaming
+        self.remember_live(live["effect"] if live else None, (live or {}).get("params"))
+        return {"applied": p["name"], "live": self.engine.status()}
 
     def startup(self):
         """Apply the configured start-up action (used by the GUI / --background)."""
@@ -302,6 +358,21 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.automation.cfg)
                     if u.path == "/firmware":
                         return self._send(200, emulate.firmware_status())
+                    if u.path == "/profiles":
+                        return self._send(200, [{"name": p.get("name"), "hardware": MODE_NAME.get((p.get("hardware") or {}).get("mode"),
+                                                                                                 (p.get("hardware") or {}).get("mode")),
+                                                 "custom": p.get("custom") is not None,
+                                                 "live": (p.get("live") or {}).get("effect")}
+                                                for p in ctl.settings.get("profiles") or []])
+                    if u.path == "/profiles/export":
+                        name = q.get("name", [""])[0]
+                        p = ctl.find_profile(name)
+                        if p is None:
+                            return self._send(404, {"error": f"no profile named {name!r}"})
+                        doc = profiles.export_doc(p)
+                        if q.get("as", [""])[0] == "code":
+                            return self._send(200, {"name": p["name"], "code": profiles.to_code(doc)})
+                        return self._send(200, doc)
                     if u.path == "/conflicts":
                         return self._send(200, system.conflicts())
                     if u.path == "/foreground":
@@ -349,12 +420,19 @@ def make_handler(ctl: Controller):
                     if p == "/effect":
                         ctl.kb.apply_fields(bytearray(CONFIG_LEN), **req)  # validate before touching the stream
                         ctl.stop_apps()
+                        # a layer stack built on the stored effect keeps running on top of the new one
+                        keep = (engine.effect.name, dict(engine.params)) if (
+                            engine.effect is not None and uses_stored_effect(engine.effect.name, engine.params)) else None
                         engine.pause()  # freeze the live frame while storing (no flash of the old effect)
-                        ctl.remember_live(None)
                         try:
                             return self._send(200, ctl.kb.set_effect(**req))
                         finally:
-                            engine.stop()  # hardware effects only show when not streaming
+                            if keep:
+                                engine.run(keep[0], **keep[1])
+                                ctl.remember_live(*keep)
+                            else:
+                                engine.stop()  # hardware effects only show when not streaming
+                                ctl.remember_live(None)
                     if p == "/custom":
                         ctl.stop_apps()
                         engine.pause()  # the custom-key preview stays on screen while we store it
@@ -396,6 +474,15 @@ def make_handler(ctl: Controller):
                         return self._send(200, {"apps": "stopped"})
                     if p == "/settings":
                         return self._send(200, ctl.update_settings(req))
+                    if p == "/profiles/import":
+                        prof = ctl.import_profile(req)
+                        return self._send(200, {"name": prof["name"], "profile": prof})
+                    if p == "/profiles/apply":
+                        name = req.get("name") if isinstance(req, dict) else None
+                        prof = ctl.find_profile(name)
+                        if prof is None:
+                            return self._send(404, {"error": f"no profile named {name!r}"})
+                        return self._send(200, ctl.apply_profile(prof))
                     if p == "/show":
                         if ctl.show_cb:
                             threading.Thread(target=ctl.show_cb, daemon=True).start()

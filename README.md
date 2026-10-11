@@ -14,13 +14,23 @@ live effects rendered by your PC (~80 fps), music sync, a desktop app, an HTTP A
 | AJAZZ AK820 **Pro** | `0C45:8009` | different chip and protocol, not supported |
 
 ## Features
-- **Built-in effects**: all 18 firmware effects with brightness, speed, direction and colour. Stored on the keyboard.
-- **Per-key colours**: paint keys in the app, save to the keyboard (works with the app closed).
-- **Live effects**: rainbow, breathing, gradient, typing ripples, **music visualiser** (WASAPI loopback, bars or pulse),
-  **system monitor** (CPU/RAM bars).
-- **App profiles**: lighting follows the program in front (Spotify → music, VS Code → typing ripples, …).
+- **Built-in effects**: all 18 firmware effects with brightness, speed, direction and colour, stored on the keyboard.
+  The on-screen preview runs the keyboard's own firmware code in an emulator, so it matches the real keyboard exactly
+  (see [docs/FIRMWARE.md](docs/FIRMWARE.md)).
+- **Per-key colours**: paint keys in the app with undo/redo and save them to the keyboard. They keep working with the app closed.
+- **Live effects** (~60 fps, rendered by the PC): rainbow, breathing, gradient, typing ripples, **music visualiser**
+  (bars, VU meter, beat flash, bass ripples, pulse), **screen ambient**, **system monitor** (CPU/RAM bars), typing heatmap.
+- **Layer editor**: stack effects like layers in an image editor. Each layer has its own keys, blend mode (normal,
+  screen, add, brightest, multiply) and opacity. The bottom layer can be the keyboard's own built-in effect, for example
+  the firmware's Rain with red WASD and typing ripples on top. Includes templates and undo/redo.
+- **Profiles you can share**: save the hardware effect, custom colours and layer stack as a profile. Apply it in one
+  step from the app, the tray, the API or an AI agent. Export it as a file or a short `evrgb1:…` share code, and
+  import other people's. Imports are validated and change nothing until you apply them.
+- **Automation**: Caps Lock / mic-mute indicator keys, notification flashes, a number-row timer, dimming when idle or
+  locked, a night schedule, and shortcut hints (hold Ctrl and the shortcuts of the app in front light up).
+- **App profiles**: lighting follows the program in front (Spotify → music, VS Code → typing ripples, a game → a layer stack).
 - **Desktop app**: AJAZZ-style UI with a live preview of the keyboard, tray icon, start with Windows, conflict detector.
-- **Automation**: local HTTP JSON API and an **MCP server**, so Claude or another agent can drive the lights.
+- **For agents and scripts**: a local HTTP JSON API and an **MCP server**, so Claude or another agent can drive the lights.
 - **Safe by design**: only commands confirmed from the vendor app are on an allow-list. Firmware-update,
   keymap and macro writes are never sent. Everything you write is read back and verified.
 - The app backs up the keyboard's lighting the first time it connects, and can restore it any time.
@@ -58,12 +68,24 @@ with Keyboard() as kb:
 ```
 
 ## HTTP API & MCP
-`GET /status /info /keys /effects /modes /frame /custom /settings` ·
-`POST /effect /custom /run /keys /clear /stop /apps /restore`. See `evision_rgb/server.py`.
+`GET /status /info /keys /effects /modes /frame /stream /custom /settings /profiles /profiles/export` ·
+`POST /effect /custom /run /keys /clear /stop /apps /notify /timer /automation /heatmap /profiles/import /profiles/apply /restore`.
+See `evision_rgb/server.py`.
+
+A layer stack is an ordinary live effect:
+```json
+POST /run {"effect": "layers", "params": {"layers": [
+  {"effect": "keyboard"},
+  {"effect": "solid", "params": {"color": "ff0000"}, "keys": ["W", "A", "S", "D"]},
+  {"effect": "reactive", "params": {"base": "000000"}, "blend": "screen", "opacity": 0.8}]}}
+```
+Layers are listed bottom first. `keys` sets where a layer shows (every key by default). `blend` is one of
+`normal | screen | add | max | multiply`. `"keyboard"` is the effect stored on the keyboard.
 
 MCP (Claude Code): `claude mcp add evision-rgb -- <venv>\Scripts\python.exe -m evision_rgb.mcp_server`
 gives the tools `keyboard_status, list_keys, list_effects, set_hardware_effect, set_custom_colors, run_live_effect,
-set_live_keys, clear_live_keys, stop_live`.
+set_live_keys, clear_live_keys, stop_live, notify, start_timer, cancel_timer, list_profiles, apply_profile,
+export_profile, import_profile`.
 
 ## Tests
 Behaviour specs run against a **firmware simulator** (`tests/fake_device.py`) that models the observed firmware
@@ -72,6 +94,11 @@ behaviour, including its quirks. A mutation check proves the suite catches real 
 cd tests; python -m unittest                    # behaviour + unit tests, no keyboard needed
 python ..\scripts\mutation_check.py              # each known past bug must make the suite fail
 $env:AK820_HW=1; python -m unittest test_hardware   # optional checks on a real keyboard (restores state)
+```
+The desktop UI can be developed and tested against the simulator too:
+```powershell
+python scripts\ui_preview_server.py 8899        # the app UI on http://127.0.0.1:8899/ with a simulated keyboard
+node scripts\ui_smoke.mjs 8899                   # drives the UI in headless Edge/Chrome; fails on any JS error
 ```
 
 ## How it works

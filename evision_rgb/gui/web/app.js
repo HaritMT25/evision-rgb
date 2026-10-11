@@ -7,6 +7,7 @@ const S = {
   layout: null, modes: [], settings: null, info: null, status: null,
   custom: {}, sel: new Set(), brush: "ff0000", group: 0, dirty: false,
   tab: "light", keyEls: {}, frameBusy: false, lastFrameAt: 0, hwBrushColor: "ff0000",
+  cHist: null, layers: [], lySel: null, lyHist: null, liveView: "cards", profileName: null,
 };
 const NO_EFFECT = "";  // app rules: keep the keyboard's own effect
 
@@ -29,6 +30,9 @@ async function safe(fn, okMsg) {
 }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 const hex = c => (c || "000000").replace("#", "").toLowerCase();
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+// profile names: same rules as the server applies to imported ones
+const cleanName = s => String(s || "").replace(/[<>\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
 
 function modal(title, bodyHtml, buttons) {
   return new Promise(res => {
@@ -83,12 +87,14 @@ function buildBoard() {
     board.appendChild(d);
     S.keyEls[k.name] = d;
   }
-  // selection: click paints (custom tab), drag draws a box
-  let start = null, moved = false, additive = false;
+  // selection: custom tab = keys to paint (click paints), layer editor = where the selected layer shows
+  let start = null, moved = false, additive = false, base = null;
   board.addEventListener("mousedown", e => {
-    if (S.tab !== "custom") return;
+    const mode = boardMode();
+    if (!mode) return;
     const r = board.getBoundingClientRect();
-    start = { x: e.clientX - r.left, y: e.clientY - r.top }; moved = false; additive = e.shiftKey || e.ctrlKey;
+    start = { x: e.clientX - r.left, y: e.clientY - r.top, mode }; moved = false; additive = e.shiftKey || e.ctrlKey;
+    base = mode === "custom" ? new Set(S.sel) : maskSet(S.layers[S.lySel]);
   });
   window.addEventListener("mousemove", e => {
     if (!start) return;
@@ -97,28 +103,37 @@ function buildBoard() {
     moved = true;
     const sb = $("#selbox"), L = Math.min(x, start.x), T = Math.min(y, start.y);
     Object.assign(sb.style, { display: "block", left: L + "px", top: T + "px", width: Math.abs(x - start.x) + "px", height: Math.abs(y - start.y) + "px" });
-    const box = sb.getBoundingClientRect();
-    if (!additive) S.sel.clear();
+    const box = sb.getBoundingClientRect(), boxed = new Set();
     for (const [n, el] of Object.entries(S.keyEls)) {
       const kr = el.getBoundingClientRect();
-      if (kr.right > box.left && kr.left < box.right && kr.bottom > box.top && kr.top < box.bottom) S.sel.add(n);
+      if (kr.right > box.left && kr.left < box.right && kr.bottom > box.top && kr.top < box.bottom) boxed.add(n);
     }
+    const next = additive ? new Set([...base, ...boxed]) : boxed;
+    if (start.mode === "custom") S.sel = next; else setMask(S.layers[S.lySel], next);
     paintSelection();
   });
   window.addEventListener("mouseup", e => {
     if (!start) return;
     $("#selbox").style.display = "none";
-    if (!moved) {
-      const key = e.target.closest(".key");
-      if (key) {
-        const n = key.dataset.name;
-        if (additive) { S.sel.has(n) ? S.sel.delete(n) : S.sel.add(n); }
-        else { S.sel = new Set([n]); setCustom({ [n]: S.brush }); }
-        paintSelection();
-      }
+    const mode = start.mode, key = e.target instanceof Element ? e.target.closest(".key") : null;
+    if (!moved && key) {
+      const n = key.dataset.name;
+      if (mode === "mask") {
+        const m = maskSet(S.layers[S.lySel]);
+        m.has(n) ? m.delete(n) : m.add(n);
+        setMask(S.layers[S.lySel], m);
+      } else if (additive) { S.sel.has(n) ? S.sel.delete(n) : S.sel.add(n); }
+      else { S.sel = new Set([n]); setCustom({ [n]: S.brush }); }
+      paintSelection();
     }
+    if (mode === "mask" && (moved || key)) lyCommit();
     start = null;
   });
+}
+function boardMode() {
+  if (S.tab === "custom") return "custom";
+  if (S.tab === "live" && S.liveView === "layers" && S.layers[S.lySel]) return "mask";
+  return null;
 }
 function colorKeys(colors) {
   for (const [n, el] of Object.entries(S.keyEls)) {
@@ -127,7 +142,13 @@ function colorKeys(colors) {
     el.style.setProperty("--c", "#" + c);
   }
 }
-function paintSelection() { for (const [n, el] of Object.entries(S.keyEls)) el.classList.toggle("sel", S.tab === "custom" && S.sel.has(n)); }
+function paintSelection() {
+  const mode = boardMode(), mask = mode === "mask" ? maskSet(S.layers[S.lySel]) : null;
+  for (const [n, el] of Object.entries(S.keyEls)) {
+    el.classList.toggle("sel", mode === "custom" && S.sel.has(n));
+    el.classList.toggle("msk", !!mask && mask.has(n));
+  }
+}
 
 // preview: a 60 fps Server-Sent-Events stream mirrors the keyboard; polling is the fallback
 function showFrame(f) {
@@ -182,6 +203,7 @@ async function statusLoop() {
     dot.className = "dot " + (S.status.live ? "live" : "ok");
     $("#statusText").textContent = S.status.live ? `live: ${modeLabel(S.status.effect)}` : "keyboard connected";
     $$(".card").forEach(c => c.classList.toggle("on", S.status.effect === c.dataset.effect && !S.status.apps));
+    markLayersRunning();
     const err = S.status.stream_error || S.status.audio_error;
     if (err) $("#statusText").textContent += " · " + err.slice(0, 60);
     renderTimer();
@@ -282,13 +304,27 @@ const pushPreview = debounce(() => {
 }, 60);
 function setCustom(patch) {
   Object.assign(S.custom, patch); setDirty(true); colorKeys(S.custom); pushPreview();
+  if (S.cHist) S.cHist.push(S.custom);
+  markUndo();
   $("#caption").innerHTML = "<b>Preview</b> of unsaved custom colours — Save to keep them";
+}
+function customStep(redo) {
+  const s = S.cHist && (redo ? S.cHist.redo() : S.cHist.undo());
+  if (!s) return;
+  S.custom = s; setDirty(true); colorKeys(S.custom); pushPreview(); markUndo();
+  $("#caption").innerHTML = "<b>Preview</b> of unsaved custom colours — Save to keep them";
+}
+function markUndo() {
+  const can = (h, m) => !!(h && h[m]());
+  $("#cUndo").disabled = !can(S.cHist, "canUndo"); $("#cRedo").disabled = !can(S.cHist, "canRedo");
+  $("#lyUndo").disabled = !can(S.lyHist, "canUndo"); $("#lyRedo").disabled = !can(S.lyHist, "canRedo");
 }
 async function loadCustom(fromKeyboard = false) {
   const saved = (S.settings.custom_groups || [])[S.group];
   const active = (S.settings.custom_active || 0) === S.group;
   // the keyboard only displays memory area 0; groups are layouts saved in this app
   S.custom = (!fromKeyboard && saved) ? { ...saved } : await api(`/custom?colorset=${active || fromKeyboard ? 0 : S.group}`);
+  S.cHist = EVHistory.create(S.custom); markUndo();
   setDirty(false); colorKeys(S.custom);
 }
 function presets(name) {
@@ -317,6 +353,8 @@ function initCustom() {
   $("#cPaint").onclick = () => S.sel.size ? setCustom(Object.fromEntries([...S.sel].map(n => [n, S.brush]))) : toast("Select keys first");
   $("#cFill").onclick = () => setCustom(Object.fromEntries(Object.keys(S.keyEls).map(n => [n, S.brush])));
   $("#cOff").onclick = () => setCustom(Object.fromEntries(Object.keys(S.keyEls).map(n => [n, "000000"])));
+  $("#cUndo").onclick = () => customStep(false);
+  $("#cRedo").onclick = () => customStep(true);
   $$("[data-preset]").forEach(b => b.onclick = () => setCustom(presets(b.dataset.preset)));
   $$("#cGroup button").forEach(b => b.onclick = async () => {
     if (S.dirty && !(await modal("Discard changes?", "Switching group discards the unsaved preview.", [["Cancel", false], ["Discard", true, "primary"]]))) return;
@@ -357,45 +395,239 @@ const EFFECTS = [
     ["left", "From", "color", "ff0080"], ["right", "To", "color", "00c0ff"], ["vertical", "Top → bottom", "check", false]] },
   { id: "solid", name: "Solid colour", desc: "One colour on every key.", p: [["color", "Colour", "color", "ffffff"]] },
 ];
-function cardParams(card) {
-  const out = {};
-  for (const el of $$("[data-p]", card)) {
-    const k = el.dataset.p;
-    if (el.type === "checkbox") out[k] = el.checked;
-    else if (el.type === "range") out[k] = el.dataset.inv ? +(1.5 - +el.value).toFixed(2) : +el.value;
-    else if (el.type === "color") { if (!el.disabled) out[k] = hex(el.value); }
-    else out[k] = el.value;
+// one parameter control; `val` = current value (undefined: the default)
+function paramHtml([k, label, type, a, b, step, def, inv], val) {
+  if (type === "range") {
+    const v = val ?? def;
+    return `<div class="p"><span>${label}</span><input type="range" data-p="${k}" min="${a}" max="${b}" step="${step}" value="${inv ? +(1.5 - v).toFixed(2) : v}" ${inv ? 'data-inv="1"' : ""}><output>${v}</output></div>`;
   }
-  if (out.color === undefined && card.dataset.effect === "reactive") out.color = null;
+  if (type === "color") return `<div class="p"><span>${label}</span><input type="color" data-p="${k}" value="#${hex(val ?? a)}"><output></output></div>`;
+  if (type === "colorOrRainbow") {
+    const rb = val == null;
+    return `<div class="p"><span>${label}</span><input type="color" data-p="${k}" value="#${hex(val || "ffffff")}" ${rb ? "disabled" : ""}><label class="row" style="gap:4px"><input type="checkbox" data-rainbow ${rb ? "checked" : ""}>🌈</label></div>`;
+  }
+  if (type === "check") return `<div class="p"><span>${label}</span><label class="toggle"><input type="checkbox" data-p="${k}" ${(val ?? a) ? "checked" : ""}><span></span></label><output></output></div>`;
+  if (type === "select") return `<div class="p"><span>${label}</span><select data-p="${k}">${a.map(o => `<option ${o === (val ?? b) ? "selected" : ""}>${o}</option>`).join("")}</select><output></output></div>`;
+  return "";
+}
+function readParams(el, effect) {
+  const out = {};
+  for (const inp of $$("[data-p]", el)) {
+    const k = inp.dataset.p;
+    if (inp.type === "checkbox") out[k] = inp.checked;
+    else if (inp.type === "range") out[k] = inp.dataset.inv ? +(1.5 - +inp.value).toFixed(2) : +inp.value;
+    else if (inp.type === "color") { if (!inp.disabled) out[k] = hex(inp.value); }
+    else out[k] = inp.value;
+  }
+  if (out.color === undefined && effect === "reactive") out.color = null;
   return out;
 }
+function wireParams(el, onInput, onChange) {
+  for (const inp of $$("input,select", el)) {
+    const rainbow = inp.matches("[data-rainbow]");  // must update the colour input before onChange runs
+    inp.addEventListener(rainbow ? "change" : "input", () => {
+      if (rainbow) $("[data-p=color]", el).disabled = inp.checked;
+      const o = inp.parentElement.querySelector("output");
+      if (inp.type === "range" && o) o.textContent = inp.dataset.inv ? (1.5 - +inp.value).toFixed(2) : inp.value;
+      onInput();
+    });
+    if (onChange) inp.addEventListener("change", onChange);
+  }
+}
+function cardParams(card) { return readParams(card, card.dataset.effect); }
 function initLive() {
   const wrap = $("#cards");
   wrap.innerHTML = EFFECTS.map(e => `<div class="card" data-effect="${e.id}">
     <h3>${e.name}<button class="btn primary" data-start>Start</button></h3><div class="desc">${e.desc}</div>
-    ${e.p.map(([k, label, type, a, b, step, def, inv]) => {
-      if (type === "range") return `<div class="p"><span>${label}</span><input type="range" data-p="${k}" min="${a}" max="${b}" step="${step}" value="${inv ? (1.5 - def) : def}" ${inv ? 'data-inv="1"' : ""}><output>${def}</output></div>`;
-      if (type === "color") return `<div class="p"><span>${label}</span><input type="color" data-p="${k}" value="#${a}"><output></output></div>`;
-      if (type === "colorOrRainbow") return `<div class="p"><span>${label}</span><input type="color" data-p="${k}" value="#ffffff" disabled><label class="row" style="gap:4px"><input type="checkbox" data-rainbow checked>🌈</label></div>`;
-      if (type === "check") return `<div class="p"><span>${label}</span><label class="toggle"><input type="checkbox" data-p="${k}" ${a ? "checked" : ""}><span></span></label><output></output></div>`;
-      if (type === "select") return `<div class="p"><span>${label}</span><select data-p="${k}">${a.map(o => `<option ${o === b ? "selected" : ""}>${o}</option>`).join("")}</select><output></output></div>`;
-    }).join("")}</div>`).join("");
+    ${e.p.map(p => paramHtml(p)).join("")}</div>`).join("");
   for (const card of $$(".card", wrap)) {
     const eff = card.dataset.effect;
     const start = () => safe(() => api("/run", { effect: eff, params: cardParams(card) }));
     $("[data-start]", card).onclick = () => start().then(() => toast(`${eff} running`));
-    const restart = debounce(() => { if (S.status && S.status.effect === eff) start(); }, 250);
-    for (const el of $$("input,select", card)) {
-      el.addEventListener("input", () => {
-        const o = el.parentElement.querySelector("output");
-        if (el.type === "range" && o) o.textContent = el.dataset.inv ? (1.5 - +el.value).toFixed(2) : el.value;
-        restart();
-      });
-    }
-    const rb = $("[data-rainbow]", card);
-    if (rb) rb.onchange = () => { $("[data-p=color]", card).disabled = rb.checked; restart(); };
+    wireParams(card, debounce(() => { if (S.status && S.status.effect === eff) start(); }, 250));
   }
   $("#liveStop").onclick = () => safe(() => api("/stop", {}), "Back to the keyboard's own effect").then(() => (S.lastFrameAt = 0));
+}
+
+// ------------------------------------------------------------------ layer editor (Live tab)
+const KEYBOARD_LAYER = { id: "keyboard", name: "Keyboard's own effect",
+  desc: "The built-in effect stored on the keyboard (choose it in Light Settings). Put live layers on top of it.", p: [] };
+const BLENDS = [["normal", "Normal"], ["screen", "Screen (lighten)"], ["add", "Add"], ["max", "Brightest wins"], ["multiply", "Multiply (tint)"]];
+const AUTO_BLEND = { reactive: "screen", music: "max", sysmon: "max" };  // sensible default when added on top
+const MAX_LAYERS = 16;
+const layerDef = id => id === "keyboard" ? KEYBOARD_LAYER : EFFECTS.find(e => e.id === id) || { id, name: id, desc: "", p: [] };
+const allKeys = () => S.layout.keys.map(k => k.name);
+function maskSet(L) { return new Set(!L ? [] : L.keys == null ? allKeys() : L.keys); }
+function setMask(L, set) {
+  const all = allKeys();
+  if (all.every(n => set.has(n))) delete L.keys;
+  else L.keys = all.filter(n => set.has(n));
+}
+function maskLabel(L) {
+  if (L.keys == null) return "every key";
+  if (!L.keys.length) return "no keys";
+  return L.keys.length <= 6 ? L.keys.join(" ") : `${L.keys.length} keys`;
+}
+function keyRows() {  // key names per physical row, top to bottom
+  const rows = [];
+  for (const k of [...S.layout.keys].sort((a, b) => a.y - b.y)) {
+    const r = rows[rows.length - 1];
+    if (r && k.y - r.y < 14) r.keys.push(k.name); else rows.push({ y: k.y, keys: [k.name] });
+  }
+  return rows.map(r => r.keys);
+}
+function defaultsFor(id) {
+  const out = {};
+  for (const [k, , type, a, b, , def] of layerDef(id).p) {
+    if (type === "range") out[k] = def;
+    else if (type === "color" || type === "check") out[k] = a;
+    else if (type === "select") out[k] = b;  // colorOrRainbow: left out = rainbow
+  }
+  return out;
+}
+const LAYER_TEMPLATES = [
+  ["Keyboard effect + red WASD", () => [{ effect: "keyboard" },
+    { effect: "solid", params: { color: "ff0000" }, keys: ["W", "A", "S", "D", "Up", "Down", "Left", "Right"] }]],
+  ["Rainbow + typing ripples", () => [{ effect: "rainbow", params: { speed: 0.25, scale: 1, angle: 0, brightness: 0.5 } },
+    { effect: "reactive", params: { base: "000000", color: null, fade: 0.6, ripple_speed: 1.2, ripple: true }, blend: "screen" }]],
+  ["Keyboard effect + music meter on the number row", () => [{ effect: "keyboard" },
+    { effect: "music", params: { style: "vu", fall: 1.2, scale: 0.8, hue_speed: 0.03 }, keys: keyRows()[1], blend: "max" }]],
+  ["Rainbow + CPU / RAM bars", () => [{ effect: "rainbow", params: { speed: 0.12, scale: 1, angle: 0, brightness: 0.35 } },
+    { effect: "sysmon", params: { base: "000000" }, keys: [...keyRows()[0], ...keyRows()[1]], blend: "max" }]],
+];
+const saveLayerDraft = debounce(() => api("/settings", { layers_draft: S.layers }).catch(() => { }), 700);
+const layersRunning = () => !!(S.status && S.status.effect === "layers" && !S.status.apps);
+const lyLive = debounce(() => { if (layersRunning()) runLayers(false).catch(() => { }); }, 250);
+async function runLayers(announce = true) {
+  if (!S.layers.length) return toast("Add a layer first", true);
+  await safe(() => api("/run", { effect: "layers", params: { layers: S.layers } }));
+  S.status = { ...(S.status || {}), live: true, effect: "layers", apps: null };
+  markLayersRunning();
+  if (announce) toast("Layers running — changes apply live");
+}
+function markLayersRunning() { $("#lyStart").textContent = layersRunning() ? "● Layers running" : "Start layers"; }
+// after every edit: remember it for undo, redraw, save the draft, update the keyboard if the stack runs
+function lyCommit({ structural = true, record = true } = {}) {
+  if (record && S.lyHist) S.lyHist.push(S.layers);
+  if (structural) renderLayers();
+  paintSelection(); markUndo(); saveLayerDraft(); lyLive();
+}
+function lyStep(redo) {
+  const s = S.lyHist && (redo ? S.lyHist.redo() : S.lyHist.undo());
+  if (!s) return;
+  S.layers = s; renderLayers(); paintSelection(); markUndo(); saveLayerDraft(); lyLive();
+}
+function renderLayers() {
+  if (S.lySel != null && !S.layers[S.lySel]) S.lySel = S.layers.length ? S.layers.length - 1 : null;
+  const list = $("#lyList");
+  list.innerHTML = S.layers.map((L, i) => [L, i]).reverse().map(([L, i]) => {
+    const d = layerDef(L.effect), on = L.enabled !== false, op = L.opacity ?? 1;
+    return `<div class="layer${i === S.lySel ? " sel" : ""}${on ? "" : " off"}" data-i="${i}">
+      <div class="lhead" title="Click to edit this layer">
+        <label class="toggle" title="Show this layer"><input type="checkbox" data-l="enabled" ${on ? "checked" : ""}><span></span></label>
+        <div class="lname"><b>${esc(L.name || d.name)}</b><span class="hint">${esc(maskLabel(L))}</span></div>
+        <select data-l="blend" title="How this layer mixes with the layers below">${BLENDS.map(([v, t]) =>
+          `<option value="${v}" ${(L.blend || "normal") === v ? "selected" : ""}>${t}</option>`).join("")}</select>
+        <input type="range" data-l="opacity" min="0" max="1" step="0.05" value="${op}" title="Opacity"><output>${Math.round(op * 100)}%</output>
+        <button class="x" data-act="up" title="Move up" ${i === S.layers.length - 1 ? "disabled" : ""}>▲</button>
+        <button class="x" data-act="down" title="Move down" ${i === 0 ? "disabled" : ""}>▼</button>
+        <button class="x" data-act="del" title="Remove layer">✕</button>
+      </div>
+      ${i === S.lySel ? `<div class="lbody">
+        <div class="hint">${esc(d.desc)}</div>
+        <div class="lparams">${d.p.map(p => paramHtml(p, (L.params || {})[p[0]])).join("")}</div>
+        <div class="row"><span class="hint">Shows on <b>${esc(maskLabel(L))}</b> · click / drag keys above</span>
+          <button class="btn" data-mask="all">Every key</button><button class="btn" data-mask="none">No keys</button>
+          <button class="btn" data-mask="invert">Invert</button></div>
+      </div>` : ""}
+    </div>`;
+  }).join("") || `<div class="hint">No layers yet — add one above or start from a template.</div>`;
+  for (const row of $$(".layer", list)) {
+    const i = +row.dataset.i, L = S.layers[i];
+    $(".lhead", row).addEventListener("click", e => {
+      if (e.target.closest("input,select,button,label")) return;
+      S.lySel = S.lySel === i ? null : i; renderLayers(); paintSelection();
+    });
+    $("[data-l=enabled]", row).onchange = e => { if (e.target.checked) delete L.enabled; else L.enabled = false; lyCommit(); };
+    $("[data-l=blend]", row).onchange = e => { if (e.target.value === "normal") delete L.blend; else L.blend = e.target.value; lyCommit(); };
+    const op = $("[data-l=opacity]", row);
+    op.oninput = () => {
+      const v = +op.value;
+      if (v >= 1) delete L.opacity; else L.opacity = v;
+      op.nextElementSibling.textContent = Math.round(v * 100) + "%";
+      lyCommit({ structural: false, record: false });
+    };
+    op.onchange = () => lyCommit({ structural: false });
+    for (const b of $$("[data-act]", row)) b.onclick = () => {
+      if (b.dataset.act === "del") {
+        S.layers.splice(i, 1);
+        S.lySel = S.lySel === i ? null : (S.lySel > i ? S.lySel - 1 : S.lySel);
+      } else {
+        const j = b.dataset.act === "up" ? i + 1 : i - 1;
+        if (j < 0 || j >= S.layers.length) return;
+        [S.layers[i], S.layers[j]] = [S.layers[j], S.layers[i]];
+        S.lySel = S.lySel === i ? j : (S.lySel === j ? i : S.lySel);
+      }
+      lyCommit();
+    };
+    const body = $(".lbody", row);
+    if (!body) continue;
+    wireParams(body, () => { L.params = readParams($(".lparams", body), L.effect); lyCommit({ structural: false, record: false }); },
+      () => lyCommit({ structural: false }));
+    for (const b of $$("[data-mask]", body)) b.onclick = () => {
+      const m = b.dataset.mask, cur = maskSet(L);
+      if (m === "all") delete L.keys;
+      else if (m === "none") L.keys = [];
+      else setMask(L, new Set(allKeys().filter(n => !cur.has(n))));
+      lyCommit();
+    };
+  }
+}
+function setLiveView(v) {
+  S.liveView = v === "layers" ? "layers" : "cards";
+  $$("#liveView button").forEach(b => b.classList.toggle("on", b.dataset.v === S.liveView));
+  $("#cards").style.display = S.liveView === "cards" ? "" : "none";
+  $("#layerEditor").style.display = S.liveView === "layers" ? "" : "none";
+  try { localStorage.setItem("evrgb.liveView", S.liveView); } catch (e) { }
+  paintSelection();
+}
+function setLayers(layers, select = null) {
+  S.layers = JSON.parse(JSON.stringify(layers));
+  S.lySel = select;
+  lyCommit();
+}
+function initLayers() {
+  const s = S.settings, last = s.last_live;
+  const fromLast = last && last.effect === "layers" && last.params && Array.isArray(last.params.layers) ? last.params.layers : null;
+  S.layers = JSON.parse(JSON.stringify(Array.isArray(s.layers_draft) && s.layers_draft.length ? s.layers_draft
+    : fromLast || LAYER_TEMPLATES[0][1]()));
+  S.lyHist = EVHistory.create(S.layers);
+  $("#lyAdd").innerHTML = `<option value="">+ Add layer…</option>` +
+    [KEYBOARD_LAYER, ...EFFECTS].map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join("");
+  $("#lyAdd").onchange = () => {
+    const id = $("#lyAdd").value; $("#lyAdd").value = "";
+    if (!id) return;
+    if (S.layers.length >= MAX_LAYERS) return toast(`At most ${MAX_LAYERS} layers`, true);
+    const L = { effect: id }, p = defaultsFor(id);
+    if (S.layers.length && AUTO_BLEND[id]) { L.blend = AUTO_BLEND[id]; if ("base" in p) p.base = "000000"; }
+    if (Object.keys(p).length) L.params = p;
+    S.layers.push(L); S.lySel = S.layers.length - 1; lyCommit();
+  };
+  $("#lyTemplate").innerHTML = `<option value="">Templates…</option>` +
+    LAYER_TEMPLATES.map(([n], i) => `<option value="${i}">${esc(n)}</option>`).join("");
+  $("#lyTemplate").onchange = () => {
+    const i = $("#lyTemplate").value; $("#lyTemplate").value = "";
+    if (i !== "") setLayers(LAYER_TEMPLATES[+i][1](), 1);
+  };
+  $("#lyUndo").onclick = () => lyStep(false);
+  $("#lyRedo").onclick = () => lyStep(true);
+  $("#lyStart").onclick = () => runLayers().catch(() => { });
+  $("#lySave").onclick = () => saveProfileFlow({ effect: "layers", params: { layers: S.layers } });
+  $$("#liveView button").forEach(b => b.onclick = () => setLiveView(b.dataset.v));
+  let v = "cards";
+  try { v = localStorage.getItem("evrgb.liveView") || "cards"; } catch (e) { }
+  setLiveView(v);
+  renderLayers(); markUndo();
 }
 
 // ------------------------------------------------------------------ automation tab
@@ -454,15 +686,19 @@ function renderTimer() {
 // ------------------------------------------------------------------ app profiles tab
 function effectOptions(sel) {
   return [`<option value="${NO_EFFECT}" ${!sel ? "selected" : ""}>Keyboard's own effect</option>`]
-    .concat(EFFECTS.map(e => `<option value="${e.id}" ${sel === e.id ? "selected" : ""}>${e.name}</option>`)).join("");
+    .concat(EFFECTS.map(e => `<option value="${e.id}" ${sel === e.id ? "selected" : ""}>${e.name}</option>`))
+    .concat([`<option value="layers" ${sel === "layers" ? "selected" : ""}>Layer stack</option>`]).join("");
 }
 function appRow(r = { match: "", effect: "reactive", params: {} }) {
   const tr = document.createElement("tr");
-  tr.innerHTML = `<td><input type="text" data-k="match" value="${(r.match || "").replace(/"/g, "&quot;")}" placeholder="e.g. spotify, code.exe, YouTube"></td>
+  tr.innerHTML = `<td><input type="text" data-k="match" value="${esc(r.match || "")}" placeholder="e.g. spotify, code.exe, YouTube"></td>
     <td><select data-k="effect">${effectOptions(r.effect)}</select></td>
-    <td><input type="text" data-k="params" value='${JSON.stringify(r.params || {}).replace(/'/g, "&#39;")}' title="effect options as JSON"></td>
+    <td><input type="text" data-k="params" value="${esc(JSON.stringify(r.params || {}))}" title="effect options as JSON"></td>
     <td><button class="x" title="remove">✕</button></td>`;
   $(".x", tr).onclick = () => tr.remove();
+  $("[data-k=effect]", tr).onchange = e => {  // a layer stack rule starts as a copy of the layer editor's stack
+    if (e.target.value === "layers") $("[data-k=params]", tr).value = JSON.stringify({ layers: S.layers });
+  };
   $("#appsRows").appendChild(tr);
 }
 function appsConfig() {
@@ -472,8 +708,9 @@ function appsConfig() {
     let params = {}; try { params = JSON.parse($("[data-k=params]", tr).value || "{}"); } catch (e) { throw new Error(`Options for "${m}" are not valid JSON`); }
     rules.push({ match: m, effect: $("[data-k=effect]", tr).value || null, params });
   }
-  const d = $("#appsDefault").value;
-  return { enabled: $("#appsOn").checked, rules, default: d ? { effect: d, params: {} } : null };
+  const d = $("#appsDefault").value, old = (S.settings.apps || {}).default;
+  const dParams = d === "layers" ? (old && old.effect === "layers" ? old.params : { layers: S.layers }) : {};
+  return { enabled: $("#appsOn").checked, rules, default: d ? { effect: d, params: dParams } : null };
 }
 function initApps() {
   const a = S.settings.apps || { rules: [] };
@@ -526,50 +763,112 @@ function renderDevInfo() {
 // ------------------------------------------------------------------ profiles (sidebar)
 function renderProfiles(selName) {
   const ps = S.settings.profiles || [];
-  $("#profileSel").innerHTML = `<option value="">${ps.length ? "Choose a profile…" : "No profiles yet"}</option>` +
-    ps.map((p, i) => `<option value="${i}" ${p.name === selName ? "selected" : ""}>${p.name}</option>`).join("");
-  $("#profileName").textContent = selName || "no profile";
+  S.profileName = selName && ps.some(p => p.name === selName) ? selName : null;
+  $("#profileSel").innerHTML = `<option value="">${ps.length ? "Profiles…" : "No profiles"}</option>` +
+    ps.map((p, i) => `<option value="${i}" ${p.name === S.profileName ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  $("#profileName").textContent = S.profileName || "no profile";
 }
-async function captureProfile(name) {
+async function captureProfile(name, live) {
   const info = await api("/info"), st = await api("/status");
-  const p = { name, hardware: { mode: info.mode_id, brightness: info.brightness, speed: info.speed, color: info.color,
-    direction: info.direction, random: !!info.random, colorset: info.colorset } };
+  const hw = { mode: info.mode_id, brightness: info.brightness, speed: info.speed, color: info.color,
+    direction: info.direction, random: !!info.random };
+  if (info.mode_id === 20) hw.colorset = 0;
+  else hw.variant = Math.min(3, info.variant || 0);  // byte 18 = effect style outside custom mode (Surmount presets)
+  const p = { name, hardware: hw };
   if (info.mode_id === 20) p.custom = await api(`/custom?colorset=0`);
-  if (st.live && st.effect && !st.apps && !(st.effect === "solid" && S.dirty)) p.live = { effect: st.effect, params: st.params || {} };
+  if (live) p.live = live;
+  else if (st.live && st.effect && !st.apps && st.effect !== "emulate" && !(st.effect === "solid" && S.dirty))
+    p.live = { effect: st.effect, params: st.params || {} };
   return p;
 }
 async function applyProfile(p) {
-  await api("/stop", {});
-  if (p.custom) await api("/custom", { colors: p.custom, colorset: 0, activate: false });
-  await api("/effect", { ...p.hardware, colorset: p.hardware.mode === 20 ? 0 : p.hardware.colorset });
-  if (p.live) await api("/run", p.live);
+  const r = await api("/profiles/apply", { name: p.name });  // one step on the server: no flash of the old lighting
+  S.status = { ...(S.status || {}), ...r.live, apps: null };
+  if (p.live && p.live.effect === "layers" && Array.isArray((p.live.params || {}).layers)) setLayers(p.live.params.layers);
+  markLayersRunning();
   await loadInfo(); S.lastFrameAt = 0; setDirty(false);
   if (S.tab === "custom") await loadCustom();
+}
+async function saveProfileFlow(live) {
+  const name = await modal("Save current lighting as a profile", '<input class="inp" placeholder="Profile name" value="profile ' + ((S.settings.profiles || []).length + 1) + '">',
+    [["Cancel", null], ["Save", "__input", "primary"]]);
+  if (!cleanName(name)) return;
+  const p = await safe(() => captureProfile(cleanName(name), live));
+  const ps = (S.settings.profiles || []).filter(x => x.name !== p.name).concat([p]);
+  S.settings = await safe(() => api("/settings", { profiles: ps }), `Saved profile "${p.name}"`);
+  renderProfiles(p.name);
+}
+const fileName = name => name.replace(/[\\/:*?"<>|]+/g, "_").trim() + ".evrgb.json";
+async function exportProfile(p) {
+  const doc = await api(`/profiles/export?name=${encodeURIComponent(p.name)}`);
+  const text = JSON.stringify(doc, null, 2), file = fileName(p.name);
+  const native = window.pywebview && window.pywebview.api && window.pywebview.api.save_text;
+  if (native) {  // desktop app: native Save dialog
+    const path = await native(file, text);
+    if (path) toast(`Saved ${path}`);
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "application/json" })); a.download = file; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+async function shareProfile(p) {
+  const { code } = await api(`/profiles/export?name=${encodeURIComponent(p.name)}&as=code`);
+  let copied = false;
+  try { await navigator.clipboard.writeText(code); copied = true; } catch (e) { }
+  await modal(`Share "${p.name}"`, `<p class="hint" style="margin-top:0">${copied ? "Copied to the clipboard. " : ""}Anyone with
+    EVision RGB can import this code with the ⇩ button next to the profile list.</p>
+    <textarea class="inp code" rows="5" readonly>${esc(code)}</textarea>`, [["Close", null, "primary"]]);
+}
+async function importFlow() {
+  let fileText = null;
+  const pending = modal("Import a profile", `<p class="hint" style="margin-top:0">Paste a share code (<code>evrgb1:…</code>) or choose a
+    profile file. Nothing changes on the keyboard until you pick the profile in the list.</p>
+    <textarea class="inp code" id="impCode" rows="4" placeholder="evrgb1:…"></textarea>
+    <div class="row" style="margin-top:8px"><button class="btn" id="impPick">Choose file…</button><span class="hint" id="impFile"></span></div>`,
+    [["Cancel", null], ["Import", "go", "primary"]]);
+  const fi = $("#fileInput");
+  fi.value = "";
+  fi.onchange = async () => {
+    const f = fi.files[0];
+    if (!f) return;
+    if (f.size > 512 * 1024) return toast("That file is too large to be a profile", true);
+    fileText = await f.text(); $("#impFile").textContent = f.name;
+  };
+  $("#impPick").onclick = () => fi.click();
+  $("#impCode").focus();
+  if ((await pending) !== "go") return;
+  const text = (fileText ?? $("#impCode").value).trim();
+  if (!text) return toast("Paste a share code or choose a file first", true);
+  let body;
+  if (text.startsWith("{")) {
+    try { body = JSON.parse(text); } catch (e) { return toast("That file is not a valid profile (JSON error)", true); }
+  } else body = { code: text };
+  const r = await safe(() => api("/profiles/import", body));
+  S.settings = await api("/settings");
+  renderProfiles(S.profileName);
+  toast(`Imported "${r.name}". Choose it in the profile list to apply it.`);
 }
 function initProfiles() {
   renderProfiles();
   $("#profileSel").onchange = () => {
     const p = S.settings.profiles[+$("#profileSel").value]; if (!p) return;
-    safe(() => applyProfile(p), `Profile "${p.name}" applied`).then(() => ($("#profileName").textContent = p.name));
+    safe(() => applyProfile(p), `Profile "${p.name}" applied`).then(() => renderProfiles(p.name), () => renderProfiles(S.profileName));
   };
-  $("#profileAdd").onclick = async () => {
-    const name = await modal("Save current lighting as a profile", '<input class="inp" placeholder="Profile name" value="profile ' + ((S.settings.profiles || []).length + 1) + '">',
-      [["Cancel", null], ["Save", "__input", "primary"]]);
-    if (!name) return;
-    const p = await safe(() => captureProfile(name.trim()));
-    const ps = (S.settings.profiles || []).filter(x => x.name !== p.name).concat([p]);
-    S.settings = await safe(() => api("/settings", { profiles: ps }), `Saved profile "${p.name}"`);
-    renderProfiles(p.name);
-  };
+  $("#profileAdd").onclick = () => saveProfileFlow();
+  $("#profileImport").onclick = () => importFlow().catch(() => { });
   $("#profileMenu").onclick = async () => {
     const i = $("#profileSel").value; if (i === "") return toast("Choose a profile first");
     const p = S.settings.profiles[+i];
-    const act = await modal(`Profile "${p.name}"`, '<input class="inp" value="' + p.name.replace(/"/g, "&quot;") + '">',
-      [["Delete", "delete"], ["Update with current lighting", "update"], ["Rename", "rename", "primary"]]);
+    const act = await modal(`Profile "${p.name}"`, '<input class="inp" value="' + esc(p.name) + '">',
+      [["Delete", "delete"], ["Export file", "export"], ["Share code", "share"], ["Update with current lighting", "update"],
+       ["Rename", "rename", "primary"]]);
+    if (act === "export") return safe(() => exportProfile(p)).catch(() => { });
+    if (act === "share") return safe(() => shareProfile(p)).catch(() => { });
     let ps = [...S.settings.profiles];
     if (act === "delete") ps.splice(+i, 1);
     else if (act === "update") ps[+i] = await captureProfile(p.name);
-    else if (act === "rename") ps[+i] = { ...p, name: ($("#mBody input").value || p.name).trim() };
+    else if (act === "rename") ps[+i] = { ...p, name: cleanName($("#mBody input").value) || p.name };
     else return;
     S.settings = await safe(() => api("/settings", { profiles: ps }), "Profiles updated");
     renderProfiles(act === "delete" ? null : ps[+i].name);
@@ -587,14 +886,30 @@ function showTab(t) {
   if (t !== "custom") S.custom = S.dirty ? S.custom : {};
   if (t === "light") loadInfo().catch(() => { });
 }
+// Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) undo and redo in the custom-key painter and the layer editor
+document.addEventListener("keydown", e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || $("#modal").classList.contains("show")) return;
+  const t = e.target;
+  if (t.tagName === "TEXTAREA" || (t.tagName === "INPUT" && !["range", "checkbox", "color", "button"].includes(t.type))) return;
+  const k = e.key.toLowerCase(), redo = k === "y" || (k === "z" && e.shiftKey);
+  if (k !== "z" && k !== "y") return;
+  if (S.tab === "custom") customStep(redo);
+  else if (S.tab === "live" && S.liveView === "layers") lyStep(redo);
+  else return;
+  e.preventDefault();
+});
 async function boot() {
   [S.layout, S.modes, S.settings] = await Promise.all([fetch("ui/layout.json").then(r => r.json()), api("/modes"), api("/settings")]);
-  buildBoard(); initLight(); initCustom(); initLive(); initApps(); initProfiles(); await initAutomation();
+  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); await initAutomation();
   await initSettings();
   $$("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#conflictPill").onclick = () => showTab("settings");
   await loadInfo().catch(e => toast(e.message, true));
   statusLoop(); conflictLoop(); startStream();
-  if (location.hash.length > 1) showTab(location.hash.slice(1));
+  if (location.hash.length > 1) {  // deep links: #custom, #live:layers, ...
+    const [tab, view] = location.hash.slice(1).split(":");
+    showTab(tab);
+    if (tab === "live" && view) setLiveView(view);
+  }
 }
 boot().catch(e => toast("Start-up failed: " + e.message, true));
