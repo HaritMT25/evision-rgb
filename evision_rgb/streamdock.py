@@ -294,6 +294,30 @@ def render_key(size: tuple[int, int], label: str = "", color: str = "000000", ic
     return im
 
 
+def render_cover(size: tuple[int, int], cover, playing: bool = True, active: bool = False):
+    """A key showing an album cover with a small badge: pause bars while playing (what a press does),
+    a play triangle on a dimmed cover while paused."""
+    from PIL import Image, ImageDraw
+    w, h = size
+    im = cover.convert("RGB").resize((w, h), Image.Resampling.LANCZOS)
+    if not playing:
+        im = Image.eval(im, lambda v: int(v * 0.55))
+    d = ImageDraw.Draw(im)
+    r = max(7, w // 6)
+    cx, cy = w - r - max(3, w // 24), h - r - max(3, h // 24)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(12, 12, 14), outline=(255, 255, 255), width=max(1, r // 6))
+    if playing:
+        bw, bh = max(2, r // 3), r
+        d.rectangle([cx - r // 2 - bw // 2, cy - bh // 2, cx - r // 2 + bw // 2, cy + bh // 2], fill=(255, 255, 255))
+        d.rectangle([cx + r // 2 - bw // 2, cy - bh // 2, cx + r // 2 + bw // 2, cy + bh // 2], fill=(255, 255, 255))
+    else:
+        d.polygon([(cx - r // 3, cy - r // 2), (cx - r // 3, cy + r // 2), (cx + r // 2, cy)], fill=(255, 255, 255))
+    if active:
+        b = max(2, w // 22)
+        d.rounded_rectangle([b // 2, b // 2, w - 1 - b // 2, h - 1 - b // 2], radius=w // 8, outline=(255, 255, 255), width=b)
+    return im
+
+
 _TURN = {90: "ROTATE_270", 180: "ROTATE_180", 270: "ROTATE_90"}  # PIL rotates counter-clockwise
 
 

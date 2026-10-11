@@ -2,8 +2,9 @@
 Restores every file afterwards. Run from the project root:
 
     python scripts/mutation_check.py [text ...]   (only the mutants whose name contains one of the texts)
-A mutant may end with {"only": "win32"}: a bug that only exists on that platform."""
-import os, shutil, subprocess, sys
+A mutant may end with options: {"only": "win32"} (a bug that only exists on that platform), {"tests": [modules]}
+(the test modules likely to catch it run first; otherwise the ones that mention the mutated module do)."""
+import os, re, shutil, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = next((p for p in (os.path.join(ROOT, ".venv", "Scripts", "python.exe"), os.path.join(ROOT, ".venv", "bin", "python"))
@@ -227,7 +228,44 @@ MUTANTS = {
         '        if False:\n            self.battery_paused = {"apps": self.apps.profile}'),
     'battery: the setting accepts anything': ('evision_rgb/automation.py',
         '    if not isinstance(cfg["battery"]["enabled"], bool):', '    if False:'),
+    # -- now playing / album colours
+    'album: the cover is read on every poll (slow)': ('evision_rgb/media.py',
+        '        if track != self._track:\n            self._track = track', '        if True:\n            self._track = track'),
+    'album: grey backgrounds and black borders count as colours': ('evision_rgb/media.py',
+        '    vivid = [c for c in cands if c[2] >= 0.25 and c[3] >= 0.2]', '    vivid = list(cands)'),
+    'album: near-identical shades listed twice': ('evision_rgb/media.py',
+        '        if all(sum((a - b) ** 2 for a, b in zip(rgb, o)) > 40 ** 2 for o in out):', '        if True:'),
+    'album: paused music at full brightness': ('evision_rgb/media.py',
+        '        return out if s["playing"] else out * self.paused', '        return out'),
+    'album: a new track jumps in without a fade': ('evision_rgb/media.py',
+        '            if self.out is not None and self.fade > 0:', '            if False:'),
+    'album: cover painted mirrored': ('evision_rgb/media.py',
+        '        self.cell = np.minimum((Y * gh).astype(int), gh - 1) * gw + np.minimum((X * gw).astype(int), gw - 1)',
+        '        self.cell = np.minimum((Y * gh).astype(int), gh - 1) * gw + np.minimum(((1 - X) * gw).astype(int), gw - 1)'),
+    'album: keeps asking the player after the effect stops': ('evision_rgb/media.py',
+        '            self.users = max(0, self.users - 1)', '            self.users = max(1, self.users - 1)'),
+    'album: a failed player query forgets the track': ('evision_rgb/media.py',
+        '            self._set({**self._snap, "error": repr(e)})', '            self._set(_empty(error=repr(e)))'),
+    'album: a closed player leaves its track on screen': ('evision_rgb/media.py',
+        '            self._track, self._art = None, (None, [], None)\n            self._set(_empty())',
+        '            self._set({**self._snap, "playing": False})'),
+    'pad: the play key never shows the cover': ('evision_rgb/macropad.py',
+        '            if s.get("image") is not None:\n                cover = (s["id"], s["playing"])',
+        '            if False:\n                cover = (s["id"], s["playing"])'),
+    'pad: the play key is not redrawn for a new track or pause': ('evision_rgb/macropad.py',
+        '                cover = (s["id"], s["playing"])', '                cover = (0, True)'),
 }
+
+# the spec module of each feature runs first for its mutants (by mutant-name prefix)
+HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_battery"], "battery:": ["test_feature_battery"],
+         "album:": ["test_feature_nowplaying"], "pad: the play key": ["test_feature_nowplaying"], "pad": ["test_feature_macropad"],
+         "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
+         "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"]}
+
+
+def hint(name):
+    return next((mods for prefix, mods in HINTS.items() if name.startswith(prefix)), [])
+
 
 def drop_bytecode(path):
     """Delete cached bytecode of `path`: a same-length mutant restored within the same second would otherwise
@@ -239,11 +277,23 @@ def drop_bytecode(path):
             os.remove(os.path.join(cache, f))
 
 
-def suite(failfast=False):
+TESTS = os.path.join(ROOT, "tests")
+
+
+def ordered_modules(rel, first=()):
+    """Every test module, the likeliest to catch a mutant of `rel` first: `first`, then those mentioning it."""
+    mods = sorted(f[:-3] for f in os.listdir(TESTS) if f.startswith("test_") and f.endswith(".py"))
+    stem = os.path.splitext(os.path.basename(rel))[0]
+    mentions = [m for m in mods if re.search(rf"\b{stem}\b", open(os.path.join(TESTS, m + ".py"), encoding="utf-8").read())]
+    order = [m for m in first if m in mods] + mentions + mods
+    return list(dict.fromkeys(order))
+
+
+def suite(failfast=False, modules=()):
     """Run the behaviour suite without writing bytecode (mutated code must never be cached). failfast: stop at
-    the first failure (a mutant only needs one failing test to count as caught)."""
-    return subprocess.run([PY, "-B", "-m", "unittest"] + (["-f"] if failfast else []), cwd=os.path.join(ROOT, "tests"),
-                          capture_output=True, text=True, timeout=300, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    the first failure (a mutant only needs one failing test to count as caught); modules: in this order."""
+    return subprocess.run([PY, "-B", "-m", "unittest"] + (["-f"] if failfast else []) + list(modules), cwd=TESTS,
+                          capture_output=True, text=True, timeout=600, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
 
 
 def failures(r):
@@ -260,7 +310,8 @@ failed_to_catch = []
 for name, (rel, old, new, *opt) in MUTANTS.items():
     if SELECT and not any(s in name.lower() for s in SELECT):
         continue
-    only = (opt[0] if opt else {}).get("only")
+    opts = opt[0] if opt else {}
+    only = opts.get("only")
     if only and not sys.platform.startswith(only):
         print(f"[n/a] {name}: {only} only"); continue
     path = os.path.join(ROOT, rel)
@@ -273,7 +324,7 @@ for name, (rel, old, new, *opt) in MUTANTS.items():
         drop_bytecode(path)
         with open(path, "w", encoding="utf-8", newline=newline) as f:
             f.write(src.replace(old, new, 1))
-        r = suite(failfast=True)
+        r = suite(failfast=True, modules=ordered_modules(rel, list(opts.get("tests", ())) + hint(name)))
         caught = r.returncode != 0
         print(f"[{'caught' if caught else 'MISSED'}] {name}" + (f"  <- {', '.join(failures(r)[:3])}" if caught else ""),
               flush=True)

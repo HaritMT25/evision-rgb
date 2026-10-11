@@ -106,6 +106,7 @@ def main(argv=None):
                 prof.stop()
                 eng.stop()
         elif a.cmd == "live":
+            from . import emulate, heatmap, media  # noqa: F401  (register 'emulate', 'heatmap', 'nowplaying')
             from .effects import Engine
             eng = Engine(kb)
             params = {k: _val(v) for k, v in (x.split("=", 1) for x in a.params)}

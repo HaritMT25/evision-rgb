@@ -185,6 +185,21 @@ try {
             document.dispatchEvent(new Event("visibilitychange")); await T.wait(600);`);
   check("and resumes when it is shown", await js(`return !!S.es && S.es.readyState !== 2`));
 
+  // ---- album colours (the preview server pretends "Demo Song" with a pink/blue cover is playing)
+  await js(`showTab("live"); setLiveView("cards"); await T.wait(2600);`);
+  check("the Album colours card shows what is playing", /Demo Song/.test(await js(`return $("#npInfo").textContent`)),
+    await js(`return $("#npInfo").textContent`));
+  check("with its cover", await js(`const i = $("#npInfo img"); return !!i && i.complete && i.naturalWidth > 0`));
+  check("and the cover's colours", await js(`return $$("#npInfo .sw").length >= 2`));
+  await js(`$('.card[data-effect="nowplaying"] [data-start]').click(); await T.wait(1200);`);
+  check("Album colours runs", (await js(`return (await api("/status")).effect`)) === "nowplaying");
+  const npc = Object.values(await js(`return (await api("/frame")).colors`));
+  const rgbOf = h => [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+  check("the keys take the cover's pink and blue", npc.some(h => { const [r, g, b] = rgbOf(h); return r > 150 && b < 150; })
+    && npc.some(h => { const [r, g, b] = rgbOf(h); return b > 150 && r < 100; }), npc.slice(0, 6).join(" "));
+  await js(`window.scrollTo(0, 0); $('.card[data-effect="nowplaying"]').scrollIntoView({block: "center"}); await T.wait(300);`);
+  await shot("album-colours");
+
   // ---- battery saver & still pictures
   await js(`showTab("auto"); await T.wait(1300);`);
   check("the battery saver switch is on by default", await js(`return $('[data-a="battery.enabled"]').checked === true`));

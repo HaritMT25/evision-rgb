@@ -22,6 +22,18 @@ class _NoCleanup:  # the fakes' install() helpers expect a unittest.TestCase
         pass
 
 
+def demo_player():
+    """'Now playing' for the preview: a made-up song with a two-colour cover."""
+    import io
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (120, 120), "#ff3060")
+    ImageDraw.Draw(im).rectangle([60, 0, 119, 119], fill="#2050ff")
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return {"app": "Spotify.exe", "title": "Demo Song", "artist": "Preview Band", "album": "Simulated",
+            "playing": True, "cover": buf.getvalue}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("port", nargs="?", type=int, default=8899)
@@ -35,6 +47,8 @@ def main():
     from evision_rgb.server import Controller, build_server
     neutral = {"caps": lambda: False, "mic_muted": lambda: False, "idle": lambda: 0.0, "locked": lambda: False,
                "now": lambda: dt.datetime(2026, 1, 1, 12)}
+    from evision_rgb import media
+    media.set_source(media.NowPlaying(fetch=demo_player))  # a pretend song, never what this PC plays
     ctl = Controller(probes=neutral, hook_keys=False)
     ctl.pads.send_keys = lambda keys: print("pad would press", "+".join(keys), flush=True)
     ctl.pads.launch = lambda target: print("pad would open", target, flush=True)

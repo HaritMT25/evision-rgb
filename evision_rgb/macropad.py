@@ -23,7 +23,7 @@ import re
 import threading
 import time
 
-from . import streamdock
+from . import media, streamdock
 from .streamdock import FAMILIES, MODELS
 
 MEDIA = {"play_pause": "media_play_pause", "next": "media_next", "previous": "media_previous",
@@ -358,12 +358,26 @@ class PadManager:
         return None
 
     def look(self, cfg: dict, index: int, active: bool) -> tuple:
+        """What key `index` shows: (label, icon, colour, active, cover). A play/pause key shows the cover of
+        what is playing: cover = (snapshot id, playing), else None."""
         k = cfg["keys"][index]
-        return k.get("label", ""), k.get("icon", ""), k.get("color", "000000"), active
+        a, cover = k.get("action") or {}, None
+        if a.get("type") == "media" and a.get("key") == "play_pause":
+            s = media.source().snapshot(max_age=2.0)
+            if s.get("image") is not None:
+                cover = (s["id"], s["playing"])
+        return k.get("label", ""), k.get("icon", ""), k.get("color", "000000"), active, cover
+
+    @staticmethod
+    def _image(size, look):
+        label, icon, color, active, cover = look
+        im = media.source().current().get("image") if cover is not None else None
+        if im is not None:
+            return streamdock.render_cover(size, im, cover[1], active)
+        return streamdock.render_key(size, label, color, icon, active)
 
     def render(self, model, cfg: dict, index: int, active: bool = False):
-        label, icon, color, act = self.look(cfg, index, active)
-        return streamdock.render_key(model.keys[index].size, label, color, icon, act)
+        return self._image(model.keys[index].size, self.look(cfg, index, active))
 
     def _draw(self, cfg: dict):
         """Upload the screen keys whose look changed, then show them all at once (one STP)."""
@@ -375,7 +389,7 @@ class PadManager:
             look = self.look(cfg, c.index, c.index == self._active)
             if self._drawn.get(c.index) == look:
                 continue
-            img = streamdock.render_key(c.size, look[0], look[2], look[1], look[3])
+            img = self._image(c.size, look)
             self.dock.set_image(c.index, streamdock.encode(self.model, c.index, img))
             self._drawn[c.index] = look
             changed = True

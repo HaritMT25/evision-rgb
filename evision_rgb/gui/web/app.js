@@ -194,11 +194,17 @@ async function previewLoop() {
   setTimeout(previewLoop, live ? 60 : 250);
 }
 function modeLabel(name) { return (name || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()); }
+// a live effect's name as the app shows it ("nowplaying" -> "Album colours")
+function effectLabel(id) {
+  const names = { layers: "Layer stack", heatmap: "Typing heatmap", emulate: "Keyboard effect copy", keyboard: "Keyboard's own effect" };
+  const e = EFFECTS.find(x => x.id === id);
+  return e ? e.name : names[id] || modeLabel(id);
+}
 function setCaption(f) {
   const st = S.status || {};
   let t;
   if (S.tab === "custom" && S.dirty) t = "<b>Preview</b> of unsaved custom colours";
-  else if (f.source === "live") t = `<b>Live:</b> ${modeLabel(f.effect)} · ` + (st.idle ? "still (drawn less often to save CPU)" : `${st.fps || 0} fps`)
+  else if (f.source === "live") t = `<b>Live:</b> ${esc(effectLabel(f.effect))} · ` + (st.idle ? "still (drawn less often to save CPU)" : `${st.fps || 0} fps`)
     + (st.apps ? ` · app profile: ${st.apps.foreground || "?"} → ${st.apps.rule}` : "");
   else if (f.source === "custom") t = `<b>Keyboard effect:</b> Custom (group ${(S.settings.custom_active || 0) + 1})`;
   else t = `<b>Keyboard effect:</b> ${modeLabel(f.mode)}` + (f.animated ? ' <span class="hint">— preview is an approximation of the keyboard\'s own animation</span>' : "");
@@ -212,8 +218,8 @@ async function statusLoop() {
     const dot = $("#statusDot");
     dot.className = "dot " + (S.status.live ? "live" : "ok");
     const bat = S.status.battery;
-    $("#statusText").textContent = S.status.live ? `live: ${modeLabel(S.status.effect)}`
-      : bat && bat.paused ? `battery saver: ${modeLabel(bat.paused)} paused` : "keyboard connected";
+    $("#statusText").textContent = S.status.live ? `live: ${effectLabel(S.status.effect)}`
+      : bat && bat.paused ? `battery saver: ${effectLabel(bat.paused)} paused` : "keyboard connected";
     $$(".card").forEach(c => c.classList.toggle("on", S.status.effect === c.dataset.effect && !S.status.apps));
     markLayersRunning();
     const err = S.status.stream_error || S.status.audio_error;
@@ -398,6 +404,9 @@ const EFFECTS = [
   { id: "music", name: "Music visualiser", desc: "Spectrum of whatever your PC is playing (bass on the left).", p: [
     ["style", "Style", "select", ["bars", "vu", "beat", "ripple", "pulse"], "bars"], ["fall", "Fall speed", "range", 0.5, 4, 0.1, 1.2],
     ["scale", "Sensitivity", "range", 0.5, 1, 0.05, 0.8, true], ["hue_speed", "Colour drift", "range", 0, 0.3, 0.01, 0.03]] },
+  { id: "nowplaying", name: "Album colours", desc: "Keys take the colours of the cover of whatever is playing (Spotify, YouTube…).", p: [
+    ["style", "Style", "select", ["flow", "cover", "solid"], "flow"], ["speed", "Drift", "range", 0, 0.3, 0.01, 0.05],
+    ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1], ["paused", "When paused", "range", 0, 1, 0.05, 0.35]] },
   { id: "ambient", name: "Screen ambient", desc: "Keys take the colours of your screen — like a mini Ambilight.", p: [
     ["mode", "Mode", "select", ["map", "average"], "map"], ["saturation", "Vividness", "range", 1, 2.5, 0.1, 1.4],
     ["smooth", "Smoothing (s)", "range", 0, 1, 0.05, 0.25], ["brightness", "Brightness", "range", 0.1, 1, 0.05, 1]] },
@@ -453,14 +462,35 @@ function initLive() {
   const wrap = $("#cards");
   wrap.innerHTML = EFFECTS.map(e => `<div class="card" data-effect="${e.id}">
     <h3>${e.name}<button class="btn primary" data-start>Start</button></h3><div class="desc">${e.desc}</div>
-    ${e.p.map(p => paramHtml(p)).join("")}</div>`).join("");
+    ${e.id === "nowplaying" ? '<div class="np" id="npInfo"></div>' : ""}${e.p.map(p => paramHtml(p)).join("")}</div>`).join("");
   for (const card of $$(".card", wrap)) {
     const eff = card.dataset.effect;
     const start = () => safe(() => api("/run", { effect: eff, params: cardParams(card) }));
-    $("[data-start]", card).onclick = () => start().then(() => toast(`${eff} running`));
+    $("[data-start]", card).onclick = () => start().then(() => toast(`${effectLabel(eff)} running`));
     wireParams(card, debounce(() => { if (S.status && S.status.effect === eff) start(); }, 250));
   }
   $("#liveStop").onclick = () => safe(() => api("/stop", {}), "Back to the keyboard's own effect").then(() => (S.lastFrameAt = 0));
+  npLoop();
+}
+// what is playing, shown in the Album colours card while the Live tab is open
+async function npLoop() {
+  const el = $("#npInfo");
+  if (el && S.tab === "live" && !document.hidden) {
+    try {
+      const n = await api("/nowplaying");
+      if (!n.available) el.innerHTML = `<span class="hint">${esc(n.reason || "This PC cannot say what is playing.")}</span>`;
+      else if (!n.title) el.innerHTML = '<span class="hint">Nothing is playing.</span>';
+      else {
+        if (S.npId !== n.id) {
+          el.innerHTML = `<img alt="" src="/nowplaying/cover.png?id=${n.id}" onerror="this.style.display='none'"><div><b>${n.playing ? "▶" : "⏸"} ${esc(n.title)}</b>`
+            + `<div class="hint">${esc(n.artist || "")}${n.app ? " · " + esc(n.app.replace(/\.exe$/i, "")) : ""}</div>`
+            + `<div>${(n.palette || []).map(c => `<i class="sw" style="background:#${esc(c)}"></i>`).join("")}</div></div>`;
+        }
+      }
+      S.npId = n.title ? n.id : null;
+    } catch (e) { }
+  }
+  setTimeout(npLoop, 2000);
 }
 
 // ------------------------------------------------------------------ layer editor (Live tab)
@@ -696,7 +726,7 @@ function renderBattery() {
   if (!b || !el) return;
   el.textContent = b.on_battery == null ? "This PC has no battery, so nothing is paused."
     : !b.on_battery ? "Plugged in. On battery the keyboard shows its own effect, which costs the PC nothing."
-    : b.paused ? `On battery: ${modeLabel(b.paused)} is paused and comes back when you plug in.`
+    : b.paused ? `On battery: ${effectLabel(b.paused)} is paused and comes back when you plug in.`
     : b.saver ? "On battery. Anything you start now keeps running." : "On battery (battery saver is off).";
 }
 function renderTimer() {

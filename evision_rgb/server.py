@@ -20,6 +20,7 @@ GET  /profiles/export?name=N[&as=code]         shareable file {"format": "evisio
 POST /profiles/import  <file contents> | {"code": "evrgb1:..."}   validated, added under a free name, not applied
 POST /profiles/apply   {"name": "Gaming"}      hardware + custom colours in one write, then the live part
 Live effect "layers" stacks effects with key masks / blend modes; layer effect "keyboard" = the stored effect.
+GET  /nowplaying | /nowplaying/cover.png       what this PC is playing (title, artist, cover colours) / its cover
 GET  /pad | /pad/key.png?model=akp03&i=0      macro pad state, configs, supported models / a key image
 POST /pad {"model": "akp03", "brightness": 80, "keys": [...], "knobs": [...]}   POST /pad/key {"model", "index", "key"}
 POST /pad/press {"model": "akp03", "key": 0} | {"knob": 1, "move": "left|right|press"}   run what it is set to
@@ -40,6 +41,7 @@ from . import settings as settings_mod
 from . import system
 from . import emulate  # registers the 'emulate' and 'keyboard' effects
 from . import heatmap as heatmap_mod  # registers 'heatmap'
+from . import media  # registers 'nowplaying' (album colours)
 from . import profiles
 from .effects import EFFECTS, Engine, NAMES
 from .keyboard import CONFIG_LEN
@@ -489,6 +491,13 @@ def make_handler(ctl: Controller):
                     return
                 if u.path == "/stream":
                     return self._stream()
+                if u.path == "/nowplaying":  # (not under the app lock: asking Windows can take a moment)
+                    return self._send(200, media.public(media.source().snapshot(max_age=1.5)))
+                if u.path == "/nowplaying/cover.png":
+                    png = media.cover_png(media.source().snapshot(max_age=1.5))
+                    if png is None:
+                        return self._send(404, {"error": "nothing with a cover is playing"})
+                    return self._send(200, png, "image/png")
                 with ctl.lock:
                     if u.path == "/status":
                         st = engine.status()

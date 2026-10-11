@@ -23,6 +23,9 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
 - **Per-key colours**: paint keys in the app with undo/redo and save them to the keyboard. They keep working with the app closed.
 - **Live effects** (~60 fps, rendered by the PC): rainbow, breathing, gradient, typing ripples, **music visualiser**
   (bars, VU meter, beat flash, bass ripples, pulse), **screen ambient**, **system monitor** (CPU/RAM bars), typing heatmap.
+- **Album colours**: the keys take the colours of the cover of whatever is playing (Spotify, YouTube in a browser, any
+  player in Windows' media controls), drifting across the board, painted as the cover itself, or as one colour.
+  No account or API key. A macro pad's play/pause key shows the cover and whether it is playing.
 - **Layer editor**: stack effects like layers in an image editor. Each layer has its own keys, blend mode (normal,
   screen, add, brightest, multiply) and opacity. The bottom layer can be the keyboard's own built-in effect, for example
   the firmware's Rain with red WASD and typing ripples on top. Includes templates and undo/redo.
@@ -53,7 +56,7 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
 ```powershell
 git clone https://github.com/HaritMT25/evision-rgb && cd evision-rgb
 python -m venv .venv; .venv\Scripts\activate
-pip install -e ".[effects,mcp,gui]"
+pip install -e ".[effects,mcp,gui]"    # gui includes "media" (now playing, Windows 10+)
 evision-rgb          # desktop app
 ```
 Build a standalone exe: `pip install -e ".[dev]"` then `sh scripts/build_exe.sh` → `dist\EVision RGB\EVision RGB.exe`.
@@ -66,7 +69,7 @@ OpenRGB in the background, which sends this keyboard the wrong protocol. The app
 evrgb info
 evrgb effect breath -b 3 -s 1 -c 00a0ff            # brightness 0..4 (5 turns the LEDs off on the AK820)
 evrgb custom --all 000010 W=ff0000 A=ff0000 S=ff0000 D=ff0000
-evrgb live music                                    # also: rainbow, reactive, sysmon, breathing, gradient, solid
+evrgb live music                                    # also: nowplaying, rainbow, reactive, sysmon, breathing, gradient, solid
 evrgb apps profiles\example.json
 evrgb serve                                         # HTTP API on 127.0.0.1:8820
 ```
@@ -84,7 +87,8 @@ with Keyboard() as kb:
 ## HTTP API & MCP
 `GET /status /info /keys /effects /modes /frame /stream /custom /settings /profiles /profiles/export` ·
 `POST /effect /custom /run /keys /clear /stop /apps /notify /timer /automation /heatmap /profiles/import /profiles/apply /restore`.
-`GET /status` includes `battery` (`on_battery`, `saver`, `paused`); `POST /automation {"battery": {"enabled": false}}`
+`GET /nowplaying` says what is playing (title, artist, app, cover colours) and `/nowplaying/cover.png` serves the
+cover. `GET /status` includes `battery` (`on_battery`, `saver`, `paused`); `POST /automation {"battery": {"enabled": false}}`
 switches the battery saver off. See `evision_rgb/server.py`.
 
 A layer stack is an ordinary live effect:
@@ -100,7 +104,7 @@ Layers are listed bottom first. `keys` sets where a layer shows (every key by de
 MCP (Claude Code): `claude mcp add evision-rgb -- <venv>\Scripts\python.exe -m evision_rgb.mcp_server`
 gives the tools `keyboard_status, list_keys, list_effects, set_hardware_effect, set_custom_colors, run_live_effect,
 set_live_keys, clear_live_keys, stop_live, notify, start_timer, cancel_timer, list_profiles, apply_profile,
-export_profile, import_profile`.
+export_profile, import_profile, pad_status, set_pad_key, now_playing`.
 
 ## Tests
 Behaviour specs run against a **firmware simulator** (`tests/fake_device.py`) that models the observed firmware

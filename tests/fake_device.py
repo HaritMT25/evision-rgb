@@ -186,6 +186,9 @@ def install(test_case) -> FakeKeyboard:
     saved = dict(emulate._FW)
     emulate._FW.update(tried=True, base=None, source="disabled in tests", disabled=True)
     test_case.addCleanup(lambda: (emulate._FW.clear(), emulate._FW.update(saved)))
+    # the PC's real media session (what you are playing) must not leak into tests
+    from evision_rgb import media
+    test_case.addCleanup(media.set_source, media.set_source(media.NowPlaying(fetch=lambda: None)))
     kb = FakeKeyboard()
     orig = proto.hid
     proto.hid = FakeHidModule(kb)

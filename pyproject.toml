@@ -17,7 +17,10 @@ dependencies = ["hidapi", "numpy", "psutil"]
 effects = ["pynput", "soundcard", "pycaw; sys_platform == 'win32'"]
 mcp = ["mcp"]
 pads = ["pillow"]
-gui = ["pywebview", "pystray", "pillow"]
+media = ["pillow", "winrt-runtime; sys_platform == 'win32'", "winrt-Windows.Foundation; sys_platform == 'win32'",
+         "winrt-Windows.Foundation.Collections; sys_platform == 'win32'",
+         "winrt-Windows.Media.Control; sys_platform == 'win32'", "winrt-Windows.Storage.Streams; sys_platform == 'win32'"]
+gui = ["pywebview", "pystray", "pillow", "evision-rgb[media]"]
 dev = ["pyinstaller"]
 
 [project.scripts]

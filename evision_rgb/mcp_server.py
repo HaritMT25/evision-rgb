@@ -100,7 +100,8 @@ def set_custom_colors(colors: dict[str, str], default: str = "000000", colorset:
 def run_live_effect(effect: str, params: dict | None = None) -> dict:
     """Start a host-rendered live effect (not saved; ends when stopped). effect: rainbow, breathing, gradient,
     solid, reactive (typing ripples), music (audio visualiser of whatever is playing), sysmon (CPU/RAM bars),
-    ambient (screen colours), layers (stack several effects).
+    ambient (screen colours), nowplaying (colours of the cover of what is playing; style flow|cover|solid),
+    layers (stack several effects).
     Example params: rainbow {"speed": 0.3}, breathing {"color": "ff0040", "period": 3},
     music {"style": "bars"|"vu"|"beat"|"ripple"|"pulse"}, reactive {"base": "000010", "color": "ffffff"},
     layers {"layers": [{"effect": "keyboard"},
@@ -188,6 +189,14 @@ def set_pad_key(index: int, label: str = "", icon: str = "", color: str = "1a1a1
     {"type": "timer", "minutes": 25}. model: "akp03" or "akp153" (default: the connected pad)."""
     return call("/pad/key", {"model": model, "index": index,
                              "key": {"label": label, "icon": icon, "color": color, "action": action or {"type": "none"}}})
+
+
+@mcp.tool()
+def now_playing() -> dict:
+    """What this PC is playing, from Windows' media controls (Spotify, browsers, any player): title,
+    artist, app, whether it is playing, and the main colours of its cover. The 'nowplaying' live effect
+    lights the keys in those colours."""
+    return call("/nowplaying")
 
 
 @mcp.tool()

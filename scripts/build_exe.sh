@@ -7,5 +7,5 @@ W=$(pwd -W)
   --add-data "$W/evision_rgb/gui/web;evision_rgb/gui/web" --add-data "$W/evision_rgb/gui/icon.ico;evision_rgb/gui" \
   --collect-all soundcard --collect-submodules webview --collect-data webview --collect-submodules evision_rgb \
   --hidden-import pynput.keyboard._win32 --hidden-import pynput.mouse._win32 --hidden-import pystray._win32 \
-  --collect-all numba --collect-all llvmlite --hidden-import pefile   --add-data "$W/evision_rgb/fw8051_fast.py;evision_rgb"   --hidden-import clr --hidden-import pycaw.pycaw --collect-submodules comtypes --exclude-module tkinter --exclude-module matplotlib \
+  --collect-all numba --collect-all llvmlite --hidden-import pefile   --add-data "$W/evision_rgb/fw8051_fast.py;evision_rgb"   --hidden-import clr --hidden-import pycaw.pycaw --collect-submodules comtypes --collect-all winrt --exclude-module tkinter --exclude-module matplotlib \
   scripts/app_entry.py
