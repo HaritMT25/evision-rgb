@@ -131,7 +131,7 @@ function paintSelection() { for (const [n, el] of Object.entries(S.keyEls)) el.c
 
 // preview loop: custom-tab edits show local state; otherwise mirror the keyboard
 async function previewLoop() {
-  const live = S.status && S.status.live;
+  const live = (S.status && S.status.live) || S.animated;
   const wait = live ? 90 : 1500;
   if (S.tab === "custom" && (S.dirty || Object.keys(S.custom).length)) {
     colorKeys(S.custom);
@@ -140,6 +140,7 @@ async function previewLoop() {
     try {
       const f = await api("/frame");
       colorKeys(f.colors);
+      S.animated = !!f.animated;
       S.lastFrameAt = Date.now();
       setCaption(f);
     } catch (e) { /* status loop reports disconnects */ }
@@ -154,7 +155,7 @@ function setCaption(f) {
   if (S.tab === "custom" && S.dirty) t = "<b>Preview</b> of unsaved custom colours";
   else if (f.source === "live") t = `<b>Live:</b> ${modeLabel(f.effect)} · ${st.fps || 0} fps` + (st.apps ? ` · app profile: ${st.apps.foreground || "?"} → ${st.apps.rule}` : "");
   else if (f.source === "custom") t = `<b>Keyboard effect:</b> Custom (group ${(S.settings.custom_active || 0) + 1})`;
-  else t = `<b>Keyboard effect:</b> ${modeLabel(f.mode)} <span class="hint">— animation runs on the keyboard itself</span>`;
+  else t = `<b>Keyboard effect:</b> ${modeLabel(f.mode)}` + (f.animated ? ' <span class="hint">— preview is an approximation of the keyboard\'s own animation</span>' : "");
   $("#caption").innerHTML = t;
 }
 

@@ -234,7 +234,7 @@ class ControllerIntegration(unittest.TestCase):
 
     def test_effect_started_while_an_indicator_shows_keeps_running_after_it_ends(self):
         self.p.caps = True
-        self.assertTrue(self.wait_for(lambda: self.call("/status")[1]["effect"] == "mirror"))
+        self.assertTrue(self.wait_for(lambda: self.call("/status")[1]["effect"] == "emulate"))
         self.call("/run", {"effect": "rainbow"})
         self.p.caps = False
         time.sleep(0.4)

@@ -44,12 +44,21 @@ MUTANTS = {
     "automation: flashes never expire": ("evision_rgb/automation.py",
         "self.flashes = [f for f in self.flashes if t - f[\"t0\"] < f[\"n\"] * f[\"period\"]]", "pass"),
     "automation: stops the user's own live effect when it ends": ("evision_rgb/server.py",
-        "if eng.effect is not None and eng.effect.name == \"mirror\":", "if eng.effect is not None:"),
+        "if eng.effect is not None and eng.effect.name == \"emulate\":", "if eng.effect is not None:"),
     "automation: never hands the keyboard back": ("evision_rgb/server.py",
         "                            eng.stop()\n                        self.auto_base = False",
         "                            pass\n                        self.auto_base = False"),
     "timer: fills right to left": ("evision_rgb/automation.py",
         "lit = NUMBER_ROW[pos <= prog + 1e-9]", "lit = NUMBER_ROW[(1 - pos) <= prog + 1e-9]"),
+    'emulation: overlay base is a flat colour (the user-reported bug)': ('evision_rgb/server.py',
+        'eng.run("emulate", **self._emulation_params())',
+        'eng.run("solid", color=self.info(0)["color"])'),
+    'emulation: preview frozen in time': ('evision_rgb/server.py',
+        'colors = emu.render(time.monotonic() - t0)',
+        'colors = emu.render(0.0)'),
+    'emulation: direction ignored': ('evision_rgb/emulate.py',
+        'self.x = (1 - X) if int(direction) == 1 else X',
+        'self.x = X'),
 }
 
 failed_to_catch = []

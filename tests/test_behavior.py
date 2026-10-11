@@ -297,7 +297,8 @@ class ServerAPI(unittest.TestCase):
     def test_frame_mirrors_live_custom_and_hardware_states(self):
         self.call("/effect", {"mode": "normal", "color": "112233", "brightness": 2})
         f = self.call("/frame")[1]
-        self.assertEqual((f["source"], f["colors"]["Esc"]), ("hardware", "112233"))
+        # the preview shows the stored colour at the stored brightness (2 of 4 -> 60 %)
+        self.assertEqual((f["source"], f["colors"]["Esc"]), ("hardware", "0a141f"))
         self.call("/custom", {"colors": {"Esc": "ff0000"}})
         f = self.call("/frame")[1]
         self.assertEqual((f["source"], f["colors"]["Esc"], f["colors"]["Q"]), ("custom", "ff0000", "000000"))

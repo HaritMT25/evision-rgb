@@ -22,11 +22,13 @@ import mimetypes
 import os
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import settings as settings_mod
 from . import system
+from . import emulate  # registers the 'emulate' effect
 from .effects import EFFECTS, Engine, NAMES
 from .keyboard import CONFIG_LEN
 from .layout import KEYS
@@ -59,6 +61,8 @@ class Controller:
         self._auto_hz = automation_hz
         self.show_cb = None  # set by the desktop app: bring its window to front
         self.backup_dir = self.ensure_backup()
+        self._info_cache = (0.0, None)
+        self._emu = (None, None, 0.0)  # (config key, emulator, t0) for the preview
         threading.Thread(target=self._automation_loop, daemon=True).start()
 
     def ensure_backup(self) -> str:
@@ -76,12 +80,22 @@ class Controller:
         return d
 
     # -- automation: borrow the LEDs only while an indicator / flash / timer / dimming needs them
-    def _mirror_params(self) -> dict:
-        info = self.kb.info()
+    def info(self, max_age: float = 1.0) -> dict:
+        """Stored config, cached briefly (the preview polls often)."""
+        t, cached = self._info_cache
+        if cached is None or time.monotonic() - t > max_age:
+            cached = self.kb.info()
+            self._info_cache = (time.monotonic(), cached)
+        return cached
+
+    def _emulation_params(self) -> dict:
+        info = self.info(0)
+        p = {k: info[k] for k in ("brightness", "speed", "direction", "random", "color")}
+        p["mode"] = info["mode_id"]
+        p["dim"] = False
         if info["mode_id"] == MODES["custom"]:
-            return {"colors": self.kb.get_custom(0)}
-        level = info["brightness"] / 4
-        return {"color": bytes(int(c * level) for c in bytes.fromhex(info["color"])).hex()}
+            p["custom"] = self.kb.get_custom(0)
+        return p
 
     def _automation_loop(self):
         while not self._auto_stop.wait(1.0 / self._auto_hz):
@@ -90,10 +104,10 @@ class Controller:
                 with self.lock:
                     eng = self.engine
                     if need and eng.effect is None:
-                        eng.run("mirror", **self._mirror_params())
+                        eng.run("emulate", **self._emulation_params())
                         self.auto_base = True
                     elif not need and self.auto_base:
-                        if eng.effect is not None and eng.effect.name == "mirror":  # never stop the user's effect
+                        if eng.effect is not None and eng.effect.name == "emulate":  # never stop the user's effect
                             eng.stop()
                         self.auto_base = False
             except Exception as e:  # keyboard unplugged etc.: keep trying
@@ -140,11 +154,16 @@ class Controller:
         if eng.last is not None:
             return {"source": "live", "effect": eng.effect.name if eng.effect else None,
                     "colors": {n: _hex(c) for n, c in zip(NAMES, eng.last)}}
-        info = self.kb.info()
+        info = self.info()
         if info["mode_id"] == MODES["custom"]:
-            return {"source": "custom", "mode": info["mode"], "colors": self.kb.get_custom(info["colorset"])}
-        return {"source": "hardware", "mode": info["mode"], "color": info["color"],
-                "colors": {n: info["color"] for n in NAMES}}
+            return {"source": "custom", "mode": info["mode"], "colors": self.kb.get_custom(0)}
+        key = tuple(info[k] for k in ("mode_id", "brightness", "speed", "direction", "random", "color"))
+        if self._emu[0] != key:
+            self._emu = (key, emulate.emulator(info), time.monotonic())
+        _, emu, t0 = self._emu
+        colors = emu.render(time.monotonic() - t0)
+        return {"source": "hardware", "mode": info["mode"], "color": info["color"], "animated": info["mode"] != "normal",
+                "colors": {n: _hex(c) for n, c in zip(NAMES, colors)}}
 
 
 def make_handler(ctl: Controller):
@@ -228,6 +247,7 @@ def make_handler(ctl: Controller):
                 req = json.loads(self.rfile.read(n) or b"{}")
                 p = self.path
                 with ctl.lock:
+                    ctl._info_cache = (0.0, None)
                     if p == "/notify":
                         ctl.automation.notify(req.get("color", "ffffff"), req.get("keys"),
                                               req.get("flashes", 3), req.get("period", 0.35))
