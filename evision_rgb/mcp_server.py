@@ -170,6 +170,27 @@ def export_profile(name: str) -> dict:
 
 
 @mcp.tool()
+def pad_status() -> dict:
+    """Macro pad (AJAZZ AKP03 / AKP153 stream dock): whether one is connected, its keys and knobs, and what
+    each key / knob movement is set to."""
+    st = call("/pad")
+    return {k: st.get(k) for k in ("connected", "model", "error", "active", "configs")}
+
+
+@mcp.tool()
+def set_pad_key(index: int, label: str = "", icon: str = "", color: str = "1a1a1e", action: dict | None = None,
+                model: str | None = None) -> dict:
+    """Program one macro pad key (index in reading order, from 0). icon = an emoji or a few letters,
+    color = RRGGBB background. action examples: {"type": "effect", "effect": "rainbow"},
+    {"type": "profile", "name": "Gaming"}, {"type": "layers"}, {"type": "stop"},
+    {"type": "brightness", "step": 1}, {"type": "media", "key": "play_pause"},
+    {"type": "hotkey", "keys": "ctrl+shift+m"}, {"type": "notify", "color": "ff0000"},
+    {"type": "timer", "minutes": 25}. model: "akp03" or "akp153" (default: the connected pad)."""
+    return call("/pad/key", {"model": model, "index": index,
+                             "key": {"label": label, "icon": icon, "color": color, "action": action or {"type": "none"}}})
+
+
+@mcp.tool()
 def import_profile(code: str) -> dict:
     """Import a profile from a share code ("evrgb1:...") without applying it. Returns the name it was
     saved under; it never replaces an existing profile."""

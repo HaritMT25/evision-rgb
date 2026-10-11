@@ -28,6 +28,7 @@ DEFAULTS = {
     "heatmap_enabled": False,     # typing heatmap is opt-in (privacy)
     "fw_time_scale": 1.0,         # calibration of exact effect emulation speed (1.0 = datasheet)
     "layers_draft": None,         # the layer editor's current stack (list of layers), kept between sessions
+    "pads": {},                   # macro pad set-up per family: {"akp03": {"brightness", "keys", "knobs"}}
 }
 
 

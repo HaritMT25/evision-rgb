@@ -875,6 +875,192 @@ function initProfiles() {
   };
 }
 
+// ------------------------------------------------------------------ macro pad tab
+const PAD_ACTIONS = [["none", "Nothing"], ["effect", "Live effect"], ["layers", "Layer stack"], ["profile", "Lighting profile"],
+  ["profile_next", "Next profile"], ["profile_prev", "Previous profile"], ["stop", "Keyboard's own effect"],
+  ["hardware", "Built-in effect"], ["brightness", "Keyboard brightness"], ["notify", "Flash the keyboard"],
+  ["timer", "Timer (start / cancel)"], ["media", "Media key"], ["hotkey", "Hotkey"], ["launch", "Open program / website"]];
+const PAD_MEDIA = [["play_pause", "Play / pause"], ["next", "Next track"], ["previous", "Previous track"],
+  ["volume_up", "Volume up"], ["volume_down", "Volume down"], ["mute", "Mute"]];
+const PAD_ICONS = ["🌈", "⌨️", "🎵", "🧅", "🖥️", "💡", "🔔", "⏱️", "☀️", "🔅", "🎮", "🎧", "🔇", "⏯️", "⏭️", "⏮️", "🎙️", "📷", "🚀", "⭐"];
+const PAD_MOVES = [["left", "Turn left"], ["right", "Turn right"], ["press", "Press"]];
+S.pad = { st: null, family: null, sel: { kind: "key", i: 0 }, v: 0 };
+
+function padModel() { return S.pad.st.connected && S.pad.st.model.family === S.pad.family ? S.pad.st.model : S.pad.st.families[S.pad.family]; }
+function padCfg() { return S.pad.st.configs[S.pad.family]; }
+function actionLabel(a) {
+  a = a || { type: "none" };
+  const name = (PAD_ACTIONS.find(x => x[0] === (a.type || "none")) || [, a.type])[1];
+  if (a.type === "effect") return `${name}: ${modeLabel(a.effect)}`;
+  if (a.type === "profile") return `Profile: ${a.name}`;
+  if (a.type === "hardware") return `Built-in: ${modeLabel(String(a.mode))}`;
+  if (a.type === "brightness") return `Brightness ${a.step > 0 ? "+" : "−"}`;
+  if (a.type === "media") return (PAD_MEDIA.find(x => x[0] === a.key) || [, a.key])[1];
+  if (a.type === "hotkey") return `Hotkey ${a.keys}`;
+  if (a.type === "launch") return `Open ${a.target}`;
+  if (a.type === "timer") return `Timer ${a.minutes || 25} min`;
+  return name;
+}
+async function padLoad() {
+  S.pad.st = await api("/pad");
+  if (!S.pad.family) S.pad.family = S.pad.st.connected ? S.pad.st.model.family : "akp03";
+  renderPad();
+}
+function renderPadState() {
+  const st = S.pad.st, el = $("#padState");
+  el.className = "pill2 " + (st.connected ? "ok" : "");
+  el.textContent = st.connected ? `${st.model.name} connected` : "No pad connected";
+  $("#padHint").textContent = st.connected ? "" : (st.error && !/disconnected/.test(st.error) ? st.error :
+    "Plug in a supported pad and it starts working; you can set it up now.");
+}
+function renderPad() {
+  renderPadState();
+  $$("#padFamily button").forEach(b => b.classList.toggle("on", b.dataset.v === S.pad.family));
+  const m = padModel(), cfg = padCfg(), view = $("#padView");
+  const cols = Math.max(...m.keys.map(k => k.col), ...m.knobs.map(k => k.col)) + 1;
+  const rows = Math.max(...m.keys.map(k => k.row), ...m.knobs.map(k => k.row)) + 1;
+  const U = 74;  // px per grid cell
+  view.style.width = (cols * U + 12) + "px"; view.style.height = (rows * U + 12) + "px";
+  view.innerHTML = m.keys.map(k => {
+    const c = cfg.keys[k.index], sel = S.pad.sel.kind === "key" && S.pad.sel.i === k.index;
+    const pos = `left:${6 + k.col * U}px;top:${6 + k.row * U}px`;
+    return k.kind === "lcd"
+      ? `<button class="pkey lcd${sel ? " sel" : ""}" data-key="${k.index}" style="${pos}" title="${esc(k.name + " · " + actionLabel(c.action))}">
+           <img alt="" src="/pad/key.png?model=${S.pad.st.connected && S.pad.st.model.family === S.pad.family ? S.pad.st.model.id : S.pad.family}&i=${k.index}&v=${S.pad.v}"></button>`
+      : `<button class="pkey btn2${sel ? " sel" : ""}" data-key="${k.index}" style="${pos}" title="${esc(k.name + " · " + actionLabel(c.action))}">
+           <span>${esc(c.label || k.name)}</span></button>`;
+  }).join("") + m.knobs.map(k => {
+    const sel = S.pad.sel.kind === "knob" && S.pad.sel.i === k.index;
+    return `<button class="pknob${sel ? " sel" : ""}" data-knob="${k.index}" style="left:${6 + k.col * U}px;top:${6 + k.row * U}px" title="${esc(k.name)}"></button>`;
+  }).join("");
+  $$("[data-key]", view).forEach(b => b.onclick = () => { S.pad.sel = { kind: "key", i: +b.dataset.key }; renderPad(); });
+  $$("[data-knob]", view).forEach(b => b.onclick = () => { S.pad.sel = { kind: "knob", i: +b.dataset.knob }; renderPad(); });
+  $("#padBright").value = cfg.brightness; $("#padBrightV").textContent = cfg.brightness + "%";
+  renderPadEditor();
+}
+function actionEditorHtml(a, id) {
+  a = a || { type: "none" };
+  const t = a.type || "none";
+  const opts = (list, cur) => list.map(([v, n]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? "selected" : ""}>${esc(n)}</option>`).join("");
+  let extra = "";
+  if (t === "effect") extra = `<select class="inp" data-f="effect">${opts(EFFECTS.map(e => [e.id, e.name]), a.effect)}</select>`;
+  if (t === "profile") {
+    const ps = (S.settings.profiles || []).map(p => [p.name, p.name]);
+    extra = ps.length ? `<select class="inp" data-f="name">${opts(ps, a.name)}</select>` : `<span class="hint">Save a profile first (sidebar +)</span>`;
+  }
+  if (t === "hardware") extra = `<select class="inp" data-f="mode">${opts(S.modes.map(m => [m.name, modeLabel(m.name)]), a.mode)}</select>`;
+  if (t === "brightness") extra = `<select class="inp" data-f="step">${opts([[1, "One step brighter"], [-1, "One step dimmer"]], a.step ?? 1)}</select>`;
+  if (t === "notify") extra = `<input type="color" data-f="color" value="#${hex(a.color || "ff3000")}">`;
+  if (t === "timer") extra = `<input class="inp" type="number" min="1" max="600" data-f="minutes" value="${a.minutes || 25}" style="width:90px"> min`;
+  if (t === "media") extra = `<select class="inp" data-f="key">${opts(PAD_MEDIA, a.key || "play_pause")}</select>`;
+  if (t === "hotkey") extra = `<input class="inp" type="text" data-f="keys" placeholder="ctrl+shift+m" value="${esc(a.keys || "")}">`;
+  if (t === "launch") extra = `<input class="inp" type="text" data-f="target" placeholder="C:\\Program Files\\…\\app.exe or https://…" value="${esc(a.target || "")}">`;
+  return `<div class="pact" data-act="${id}"><select class="inp" data-f="type">${opts(PAD_ACTIONS, t)}</select>${extra}</div>`;
+}
+const PAD_FIELDS = { effect: ["effect"], profile: ["name"], hardware: ["mode"], brightness: ["step"], notify: ["color"],
+  timer: ["minutes"], media: ["key"], hotkey: ["keys"], launch: ["target"] };
+function readAction(el) {
+  const a = { type: $("[data-f=type]", el).value };
+  for (const f of $$("[data-f]", el)) {  // only the fields of this type (the editor may still show the old type's)
+    const k = f.dataset.f;
+    if (!(PAD_FIELDS[a.type] || []).includes(k)) continue;
+    if (k === "step" || k === "minutes") a[k] = +f.value;
+    else if (f.type === "color") a[k] = hex(f.value);
+    else a[k] = f.value.trim();
+  }
+  if (a.type === "media" && !a.key) a.key = "play_pause";
+  if (a.type === "brightness" && !a.step) a.step = 1;
+  if (a.type === "effect" && !a.effect) a.effect = EFFECTS[0].id;
+  if (a.type === "hardware" && !a.mode) a.mode = S.modes[0].name;
+  if (a.type === "profile" && !a.name && (S.settings.profiles || []).length) a.name = S.settings.profiles[0].name;
+  return a;
+}
+function renderPadEditor() {
+  const m = padModel(), cfg = padCfg(), ed = $("#padEdit"), sel = S.pad.sel;
+  if (sel.kind === "knob" && !m.knobs[sel.i]) S.pad.sel = { kind: "key", i: 0 };
+  if (S.pad.sel.kind === "key") {
+    const k = m.keys[S.pad.sel.i], c = cfg.keys[k.index];
+    ed.innerHTML = `<h2>${esc(k.name)} <span class="hint">${k.kind === "lcd" ? "screen key" : "button (no screen)"}</span></h2>
+      <div class="row" style="margin-bottom:10px"><input class="inp" style="width:170px" data-k="label" maxlength="24" placeholder="Label" value="${esc(c.label)}">
+        <input class="inp" style="width:70px" data-k="icon" maxlength="8" placeholder="Icon" value="${esc(c.icon)}"
+        ${k.kind === "lcd" ? "" : "disabled"}><input type="color" data-k="color" value="#${hex(c.color)}" ${k.kind === "lcd" ? "" : "disabled"} title="Background"></div>
+      ${k.kind === "lcd" ? `<div class="icons">${PAD_ICONS.map(i => `<button class="ico" data-ico="${i}">${i}</button>`).join("")}</div>` : ""}
+      <div class="field"><label>When pressed</label>${actionEditorHtml(c.action, "key")}</div>
+      <div class="row"><button class="btn" id="padTest">Run it now</button><span class="hint" id="padErr">Saved automatically.</span></div>`;
+  } else {
+    const k = m.knobs[S.pad.sel.i], c = cfg.knobs[k.index] || {};
+    ed.innerHTML = `<h2>${esc(k.name)}</h2>` + PAD_MOVES.map(([mv, n]) =>
+      `<div class="field"><label>${n}</label>${actionEditorHtml(c[mv], mv)}</div>`).join("") +
+      `<div class="row"><button class="btn" id="padTest">Turn right now</button><span class="hint" id="padErr">Saved automatically.</span></div>`;
+  }
+  const save = debounce(padSave, 350);
+  $$("input,select", ed).forEach(el => el.addEventListener(el.tagName === "SELECT" || el.type === "color" ? "change" : "input", () => {
+    padCollect();
+    if (el.dataset.f === "type") renderPadEditor();  // show the fields of the new action type
+    save();
+  }));
+  $$("[data-ico]", ed).forEach(b => b.onclick = () => { $("[data-k=icon]", ed).value = b.dataset.ico; padCollect(); save(); });
+  $("#padTest").onclick = () => safe(async () => {
+    await padSaveNow();
+    const body = S.pad.sel.kind === "key" ? { model: S.pad.family, key: S.pad.sel.i } : { model: S.pad.family, knob: S.pad.sel.i, move: "right" };
+    await api("/pad/press", body);
+  }, "Done");
+}
+function padCollect() {  // editor -> S.pad.st.configs
+  const cfg = padCfg(), ed = $("#padEdit");
+  if (S.pad.sel.kind === "key") {
+    const c = cfg.keys[S.pad.sel.i];
+    c.label = $("[data-k=label]", ed).value; c.icon = $("[data-k=icon]", ed).value; c.color = hex($("[data-k=color]", ed).value);
+    c.action = readAction($("[data-act=key]", ed));
+  } else {
+    const k = {};
+    for (const [mv] of PAD_MOVES) { const a = readAction($(`[data-act=${mv}]`, ed)); if (a.type !== "none") k[mv] = a; }
+    cfg.knobs[S.pad.sel.i] = k;
+  }
+}
+async function padSaveNow() {
+  const cfg = padCfg();
+  const res = await api("/pad", { model: S.pad.family, brightness: cfg.brightness, keys: cfg.keys, knobs: cfg.knobs });
+  S.pad.st.configs[S.pad.family] = res;
+  S.pad.v++;
+  for (const b of $$("#padView .pkey.lcd img")) b.src = b.src.replace(/v=\d+/, "v=" + S.pad.v);
+  return res;
+}
+function padErr(msg) {  // shown next to the editor (typing a hotkey is invalid until it is finished)
+  const el = $("#padErr");
+  if (!el) return;
+  el.textContent = msg || "Saved automatically.";
+  el.classList.toggle("err", !!msg);
+}
+function padIncomplete() {  // still being typed: don't send it yet
+  const cfg = padCfg(), acts = S.pad.sel.kind === "key" ? [cfg.keys[S.pad.sel.i].action] : Object.values(cfg.knobs[S.pad.sel.i] || {});
+  for (const a of acts) {
+    if (a.type === "hotkey" && (!a.keys || /\+\s*$/.test(a.keys))) return "Finish the hotkey, e.g. ctrl+shift+m";
+    if (a.type === "launch" && !a.target) return "Enter a program, file or web address";
+  }
+  return "";
+}
+const padSave = () => {
+  const wait = padIncomplete();
+  if (wait) return padErr(wait);
+  return padSaveNow().then(() => padErr(""), e => padErr(e.message));
+};
+function initPad() {
+  $$("#padFamily button").forEach(b => b.onclick = () => { S.pad.family = b.dataset.v; S.pad.sel = { kind: "key", i: 0 }; renderPad(); });
+  const saveB = debounce(padSave, 300);
+  $("#padBright").oninput = () => { padCfg().brightness = +$("#padBright").value; $("#padBrightV").textContent = $("#padBright").value + "%"; saveB(); };
+  padLoad().catch(e => toast("Macro pad: " + e.message, true));
+  setInterval(async () => {  // follow plug / unplug and what is lit on the pad
+    if (S.tab !== "pad") return;
+    try {
+      const st = await api("/pad"), was = S.pad.st;
+      const changed = st.connected !== was.connected || st.active !== was.active || (st.model || {}).id !== (was.model || {}).id;
+      S.pad.st = { ...st, configs: was.configs };
+      if (changed) { if (st.connected && !was.connected) S.pad.family = st.model.family; S.pad.v++; renderPad(); } else renderPadState();
+    } catch (e) { }
+  }, 1500);
+}
+
 // ------------------------------------------------------------------ tabs + boot
 function showTab(t) {
   S.tab = t;
@@ -885,6 +1071,7 @@ function showTab(t) {
   if (t === "custom" && !S.dirty) loadCustom().catch(() => { });
   if (t !== "custom") S.custom = S.dirty ? S.custom : {};
   if (t === "light") loadInfo().catch(() => { });
+  if (t === "pad" && S.pad.st) padLoad().catch(() => { });
 }
 // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) undo and redo in the custom-key painter and the layer editor
 document.addEventListener("keydown", e => {
@@ -900,7 +1087,7 @@ document.addEventListener("keydown", e => {
 });
 async function boot() {
   [S.layout, S.modes, S.settings] = await Promise.all([fetch("ui/layout.json").then(r => r.json()), api("/modes"), api("/settings")]);
-  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); await initAutomation();
+  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); initPad(); await initAutomation();
   await initSettings();
   $$("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#conflictPill").onclick = () => showTab("settings");

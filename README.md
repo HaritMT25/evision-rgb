@@ -12,6 +12,8 @@ live effects rendered by your PC (~80 fps), music sync, a desktop app, an HTTP A
 | AJAZZ AK820 (wired RGB, fw V0103) | `320F:505B` | **verified**: everything below tested on hardware |
 | Marvo KG980A, Koorui MK104, Skillkorp K5, Mars Gaming MK5 | `320F:505B` | same protocol reported; layout differs, untested |
 | AJAZZ AK820 **Pro** | `0C45:8009` | different chip and protocol, not supported |
+| AJAZZ **AKP03** family macro pads (6 screen keys, 3 buttons, 3 knobs), Mirabox N3 | `0300:1001-1003`, `0300:3002-3003`, `6602/6603` | from published protocol, simulator-tested; [docs/MACROPADS.md](docs/MACROPADS.md) |
+| AJAZZ **AKP153** family macro pads (15 + 3 screen keys), Mirabox HSV293S | `5548:6674`, `0300:1010/1020/3010/3011`, `5548:6670` | from published protocol, simulator-tested |
 
 ## Features
 - **Built-in effects**: all 18 firmware effects with brightness, speed, direction and colour, stored on the keyboard.
@@ -29,6 +31,10 @@ live effects rendered by your PC (~80 fps), music sync, a desktop app, an HTTP A
 - **Automation**: Caps Lock / mic-mute indicator keys, notification flashes, a number-row timer, dimming when idle or
   locked, a night schedule, and shortcut hints (hold Ctrl and the shortcuts of the app in front light up).
 - **App profiles**: lighting follows the program in front (Spotify → music, VS Code → typing ripples, a game → a layer stack).
+- **Macro pads** (AJAZZ AKP03 / AKP153 "stream docks"): draws icons on the pad's screen keys and runs an action per
+  key or knob turn. Actions include lighting profiles, effects, the layer stack, keyboard brightness, media keys,
+  hotkeys, a timer and launching programs. The key whose effect is running gets a frame. Set it up in the app before
+  the pad arrives.
 - **Desktop app**: AJAZZ-style UI with a live preview of the keyboard, tray icon, start with Windows, conflict detector.
 - **For agents and scripts**: a local HTTP JSON API and an **MCP server**, so Claude or another agent can drive the lights.
 - **Safe by design**: only commands confirmed from the vendor app are on an allow-list. Firmware-update,

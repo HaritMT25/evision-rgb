@@ -19,6 +19,10 @@ GET  /profiles/export?name=N[&as=code]         shareable file {"format": "evisio
 POST /profiles/import  <file contents> | {"code": "evrgb1:..."}   validated, added under a free name, not applied
 POST /profiles/apply   {"name": "Gaming"}      hardware + custom colours in one write, then the live part
 Live effect "layers" stacks effects with key masks / blend modes; layer effect "keyboard" = the stored effect.
+GET  /pad | /pad/key.png?model=akp03&i=0      macro pad state, configs, supported models / a key image
+POST /pad {"model": "akp03", "brightness": 80, "keys": [...], "knobs": [...]}   POST /pad/key {"model", "index", "key"}
+POST /pad/press {"model": "akp03", "key": 0} | {"knob": 1, "move": "left|right|press"}   run what it is set to
+Only local programs and the app's own page are served: other Host names / Origins and non-JSON POSTs are refused.
 """
 from __future__ import annotations
 
@@ -95,7 +99,13 @@ class Controller:
         self._info_cache = (0.0, None)
         self._emu = (None, None, 0.0)  # (config key, emulator, t0) for the preview
         emulate.set_stored_effect(self._emulation_params)  # 'keyboard' layers show the stored effect
+        self.active_profile = None  # name of the profile applied last, until the lighting is changed otherwise
+        from .macropad import PadManager
+        self.pads = PadManager(self)  # started by the app / `evrgb serve` (start_pads), never by tests
         threading.Thread(target=self._automation_loop, daemon=True).start()
+
+    def start_pads(self):
+        self.pads.start()
 
     def ensure_backup(self) -> str:
         """On the very first start, save the keyboard's lighting before this app changes anything.
@@ -164,6 +174,7 @@ class Controller:
 
     def close(self):
         self._auto_stop.set()
+        self.pads.stop()
         prev = emulate.set_stored_effect(None)
         if prev != self._emulation_params:  # another (newer) controller registered itself: keep it
             emulate.set_stored_effect(prev)
@@ -202,6 +213,46 @@ class Controller:
     def remember_live(self, effect: str | None, params: dict | None = None):
         self.update_settings({"last_live": {"effect": effect, "params": params or {}} if effect else None})
 
+    # -- lighting changes shared by the HTTP API and the macro pad
+    def run_live(self, effect: str, params: dict | None = None, remember: bool = True) -> dict:
+        if effect not in EFFECTS:
+            raise ValueError(f"unknown effect {effect!r}; choose from {list(EFFECTS)}")
+        self.stop_apps()
+        run_params = dict(params or {})
+        if effect == "heatmap" and "counts" not in run_params:
+            run_params["counts"] = self.heatmap.counts()
+        st = self.engine.run(effect, **run_params)
+        self.active_profile = None
+        if remember:  # previews (custom-key editing) are not remembered
+            self.remember_live(effect, params or {})
+        return st
+
+    def stop_live(self) -> dict:
+        self.stop_apps()
+        self.remember_live(None)
+        self.active_profile = None
+        return self.engine.stop()
+
+    def set_hardware(self, **fields) -> dict:
+        """Store a built-in effect on the keyboard. A layer stack drawn on top of the stored effect keeps
+        running on top of the new one; any other live effect ends (hardware effects only show then)."""
+        self.kb.apply_fields(bytearray(CONFIG_LEN), **fields)  # validate before touching the stream
+        self.stop_apps()
+        eng = self.engine
+        keep = (eng.effect.name, dict(eng.params)) if (
+            eng.effect is not None and uses_stored_effect(eng.effect.name, eng.params)) else None
+        eng.pause()  # freeze the live frame while storing (no flash of the old effect)
+        self.active_profile = None
+        try:
+            return self.kb.set_effect(**fields)
+        finally:
+            if keep:
+                eng.run(keep[0], **keep[1])
+                self.remember_live(*keep)
+            else:
+                eng.stop()
+                self.remember_live(None)
+
     # -- profiles (hardware effect + custom colours + live effect / layer stack)
     def find_profile(self, name: str) -> dict | None:
         return next((p for p in self.settings.get("profiles") or [] if p.get("name") == name), None)
@@ -217,6 +268,7 @@ class Controller:
     def apply_profile(self, p: dict) -> dict:
         """Store the hardware effect and custom colours in ONE keyboard transaction, then start the live
         part. The current live frame stays on screen while storing, so the old lighting never shows."""
+        name = p.get("name") if isinstance(p, dict) else None
         p = profiles.validate_profile(p)
         hw = profiles.hardware_args(p.get("hardware") or {})
         if p.get("custom") is not None and not hw:
@@ -235,6 +287,7 @@ class Controller:
         if not live:
             self.engine.stop()  # hardware effects only show when not streaming
         self.remember_live(live["effect"] if live else None, (live or {}).get("params"))
+        self.active_profile = name
         return {"applied": p["name"], "live": self.engine.status()}
 
     def startup(self):
@@ -288,6 +341,23 @@ def make_handler(ctl: Controller):
         def log_message(self, *a):
             pass
 
+        def _local(self, post: bool) -> bool:
+            """Only programs on this PC and the app's own page may use the API (a macro pad key can start
+            programs): refuse other host names (DNS rebinding), other web origins and non-JSON posts
+            (cross-site forms). Replies itself when refusing."""
+            port = self.server.server_address[1]
+            ours = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+            host, origin = self.headers.get("Host"), self.headers.get("Origin")
+            if host is not None and host.lower() not in ours:
+                self._send(403, {"error": "this API only answers 127.0.0.1 / localhost"})
+            elif origin is not None and origin.lower() not in {"http://" + h for h in ours}:
+                self._send(403, {"error": "requests from web pages are not allowed"})
+            elif post and not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
+                self._send(415, {"error": "send JSON (Content-Type: application/json)"})
+            else:
+                return True
+            return False
+
         def _static(self, path: str) -> bool:
             if path in ("/", "/index.html"):
                 rel = "index.html"
@@ -325,6 +395,8 @@ def make_handler(ctl: Controller):
             u = urlparse(self.path)
             q = parse_qs(u.query)
             try:
+                if not self._local(post=False):
+                    return
                 if self._static(u.path):
                     return
                 if u.path == "/stream":
@@ -373,6 +445,11 @@ def make_handler(ctl: Controller):
                         if q.get("as", [""])[0] == "code":
                             return self._send(200, {"name": p["name"], "code": profiles.to_code(doc)})
                         return self._send(200, doc)
+                    if u.path == "/pad":
+                        return self._send(200, ctl.pads.status())
+                    if u.path == "/pad/key.png":
+                        png = ctl.pads.preview_png(q.get("model", [None])[0], int(q.get("i", ["0"])[0]))
+                        return self._send(200, png, "image/png")
                     if u.path == "/conflicts":
                         return self._send(200, system.conflicts())
                     if u.path == "/foreground":
@@ -383,13 +460,18 @@ def make_handler(ctl: Controller):
                         return self._send(200, {"enabled": system.autostart_enabled(),
                                                 "command": system.launch_command()})
                 self._send(404, {"error": "not found"})
+            except (KeyError, ValueError, TypeError) as e:
+                self._send(400, {"error": str(e) or repr(e)})
             except Exception as e:
                 self._send(500, {"error": repr(e)})
 
         def do_POST(self):
             try:
                 n = int(self.headers.get("Content-Length") or 0)
-                req = json.loads(self.rfile.read(n) or b"{}")
+                body = self.rfile.read(n)  # read before refusing, or the client sees a reset connection
+                if not self._local(post=True):
+                    return
+                req = json.loads(body or b"{}")
                 p = self.path
                 with ctl.lock:
                     ctl._info_cache = (0.0, None)
@@ -418,25 +500,12 @@ def make_handler(ctl: Controller):
                         ctl.update_settings({"automation": cfg})
                         return self._send(200, cfg)
                     if p == "/effect":
-                        ctl.kb.apply_fields(bytearray(CONFIG_LEN), **req)  # validate before touching the stream
-                        ctl.stop_apps()
-                        # a layer stack built on the stored effect keeps running on top of the new one
-                        keep = (engine.effect.name, dict(engine.params)) if (
-                            engine.effect is not None and uses_stored_effect(engine.effect.name, engine.params)) else None
-                        engine.pause()  # freeze the live frame while storing (no flash of the old effect)
-                        try:
-                            return self._send(200, ctl.kb.set_effect(**req))
-                        finally:
-                            if keep:
-                                engine.run(keep[0], **keep[1])
-                                ctl.remember_live(*keep)
-                            else:
-                                engine.stop()  # hardware effects only show when not streaming
-                                ctl.remember_live(None)
+                        return self._send(200, ctl.set_hardware(**req))
                     if p == "/custom":
                         ctl.stop_apps()
                         engine.pause()  # the custom-key preview stays on screen while we store it
                         ctl.remember_live(None)
+                        ctl.active_profile = None
                         try:
                             ctl.kb.set_custom(req.get("colors", {}), req.get("default", "000000"),
                                               req.get("colorset", 0), req.get("activate", True))
@@ -444,25 +513,15 @@ def make_handler(ctl: Controller):
                             engine.stop()
                         return self._send(200, ctl.kb.info())
                     if p == "/run":
-                        if req.get("effect") not in EFFECTS:
-                            raise ValueError(f"unknown effect {req.get('effect')!r}; choose from {list(EFFECTS)}")
-                        ctl.stop_apps()
-                        params = dict(req.get("params", {}))
-                        if req["effect"] == "heatmap" and "counts" not in params:
-                            params["counts"] = ctl.heatmap.counts()
-                        st = engine.run(req["effect"], **params)
-                        if req.get("remember", True):  # previews (custom-key editing) are not remembered
-                            ctl.remember_live(req["effect"], req.get("params", {}))
-                        return self._send(200, st)
+                        return self._send(200, ctl.run_live(req.get("effect"), req.get("params", {}),
+                                                            req.get("remember", True)))
                     if p == "/keys":
                         return self._send(200, engine.set_keys(req["colors"]))
                     if p == "/clear":
                         engine.clear_keys()
                         return self._send(200, engine.status())
                     if p == "/stop":
-                        ctl.stop_apps()
-                        ctl.remember_live(None)
-                        return self._send(200, engine.stop())
+                        return self._send(200, ctl.stop_live())
                     if p == "/apps":
                         cfg = {**ctl.settings.get("apps", {}), **req}
                         ctl.update_settings({"apps": cfg})
@@ -483,6 +542,14 @@ def make_handler(ctl: Controller):
                         if prof is None:
                             return self._send(404, {"error": f"no profile named {name!r}"})
                         return self._send(200, ctl.apply_profile(prof))
+                    if p == "/pad":
+                        return self._send(200, ctl.pads.configure(req))
+                    if p == "/pad/key":
+                        return self._send(200, ctl.pads.set_key(req.get("model"), req.get("index"), req.get("key")))
+                    if p == "/pad/press":
+                        ctl.pads.press(req.get("model"), key=req.get("key"), knob=req.get("knob"),
+                                       move=req.get("move", "press"))
+                        return self._send(200, {"ok": True})
                     if p == "/show":
                         if ctl.show_cb:
                             threading.Thread(target=ctl.show_cb, daemon=True).start()
@@ -524,6 +591,7 @@ def build_server(ctl: Controller, port: int = DEFAULT_PORT) -> ThreadingHTTPServ
 
 def serve(port: int = DEFAULT_PORT):
     ctl = Controller()
+    ctl.start_pads()
     httpd = build_server(ctl, port)
     print(f"AK820 API on http://127.0.0.1:{port}  (Ctrl+C to stop)")
     try:

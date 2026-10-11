@@ -34,6 +34,8 @@
         <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/></svg>Automation</button>
       <button data-tab="apps">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg>App Profiles</button>
+      <button data-tab="pad">
+        <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="3"/><rect x="5.5" y="7" width="4" height="4" rx="1"/><rect x="11" y="7" width="4" height="4" rx="1"/><rect x="5.5" y="13" width="4" height="4" rx="1"/><rect x="11" y="13" width="4" height="4" rx="1"/><circle cx="18.2" cy="10" r="1.6"/><circle cx="18.2" cy="15.5" r="1.6"/></svg>Macro Pad</button>
       <button data-tab="settings">
         <svg viewBox="0 0 24 24"><path d="M6 3v18M18 3v18M12 3v18"/><circle cx="6" cy="8" r="2"/><circle cx="12" cy="15" r="2"/><circle cx="18" cy="10" r="2"/></svg>Other Settings</button>
     </nav>
@@ -217,6 +219,24 @@
           <button class="btn" id="appsAdd">+ Add rule</button>
           <button class="btn" id="appsPick">+ Add the next app I click (3 s)</button>
           <button class="btn primary" id="appsSave">Save &amp; apply</button>
+        </div>
+      </div>
+
+      <!-- macro pad -->
+      <div class="tab" id="tab-pad">
+        <div class="row" style="justify-content:space-between;margin-bottom:12px">
+          <div class="row"><h2 style="margin:0">Macro pad</h2><span class="pill2" id="padState">…</span></div>
+          <div class="row"><span class="hint">Layout</span>
+            <div class="seg" id="padFamily"><button data-v="akp03">AKP03 · 9 keys + 3 knobs</button><button data-v="akp153">AKP153 · 18 keys</button></div></div>
+        </div>
+        <div class="padwrap">
+          <div>
+            <div class="padview" id="padView"></div>
+            <div class="row" style="margin-top:12px"><span class="hint">Pad brightness</span>
+              <input type="range" id="padBright" min="0" max="100" step="5" style="width:170px"><output id="padBrightV" class="hint"></output></div>
+            <p class="hint" id="padHint"></p>
+          </div>
+          <div class="padedit" id="padEdit"></div>
         </div>
       </div>
 

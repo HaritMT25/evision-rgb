@@ -98,6 +98,7 @@ class App:
         self.httpd = build_server(self.ctl, self.port)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.ctl.startup()
+        self.ctl.start_pads()
 
     def show(self):
         if self.window:
@@ -120,6 +121,7 @@ class App:
         try:
             if self.ctl:
                 self.ctl.stop_apps()
+                self.ctl.pads.stop()     # blanks the pad's keys: they do nothing without the app
                 self.ctl.engine.close()  # ends live mode; keyboard falls back to its stored effect
             if self.httpd:
                 self.httpd.shutdown()

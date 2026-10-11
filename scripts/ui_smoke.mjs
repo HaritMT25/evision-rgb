@@ -1,13 +1,14 @@
 // UI smoke test: drives the real app UI in headless Edge/Chrome over the DevTools protocol and fails on
 // any JavaScript error or broken interaction. Serve the UI against the simulated keyboard first:
-//   python scripts/ui_preview_server.py 8899        (another terminal)
-//   node scripts/ui_smoke.mjs [port] [screenshot-dir]
+//   python scripts/ui_preview_server.py 8899 [--pad akp03e-rev2]       (another terminal)
+//   node scripts/ui_smoke.mjs [port] [screenshot-dir] [--pad]          (--pad: expect the simulated pad)
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const PORT = +(process.argv[2] || 8899), OUT = process.argv[3] || null, DEVTOOLS = 9300 + Math.floor(Math.random() * 600);
+const args = process.argv.slice(2).filter(a => a !== "--pad"), EXPECT_PAD = process.argv.includes("--pad");
+const PORT = +(args[0] || 8899), OUT = args[1] || null, DEVTOOLS = 9300 + Math.floor(Math.random() * 600);
 const BROWSERS = ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
   "C:/Program Files/Google/Chrome/Application/chrome.exe", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/microsoft-edge"];
 const exe = BROWSERS.find(p => existsSync(p));
@@ -144,6 +145,37 @@ try {
   check("Redo button paints it again", await js(`return S.custom.Esc === "0000ff"`));
   await shot("custom");
   await js(`$("#cDiscard").click(); await T.wait(500);`);
+
+  // ---- macro pad tab (start the preview server with --pad akp03e-rev2 and pass --pad here to expect one)
+  await js(`showTab("pad"); await T.wait(900);`);
+  if (EXPECT_PAD) check("the simulated pad shows as connected", await js(`return S.pad.st.connected && /connected/.test($("#padState").textContent)`),
+    await js(`return $("#padState").textContent`));
+  check("pad layout: 6 screen keys, 3 buttons, 3 knobs", await js(`return $$("#padView .pkey.lcd").length === 6 && $$("#padView .pkey.btn2").length === 3 && $$("#padView .pknob").length === 3`));
+  check("key images load", await js(`await T.wait(400); return $$("#padView .pkey.lcd img").every(i => i.complete && i.naturalWidth > 0)`));
+  await shot("pad");
+  await js(`$('#padView [data-key="1"]').click(); await T.wait(100);`);
+  check("selecting a key opens its editor", await js(`return /Key 2/.test($("#padEdit h2").textContent)`));
+  await js(`const l = $("#padEdit [data-k=label]"); l.value = "Mic"; l.dispatchEvent(new Event("input", {bubbles: true})); await T.wait(700);`);
+  check("label edits are saved", (await js(`return (await api("/pad")).configs.akp03.keys[1].label`)) === "Mic");
+  await js(`T.set("#padEdit [data-f=type]", "hotkey"); await T.wait(150);`);
+  check("choosing Hotkey shows its field", await js(`return !!$("#padEdit [data-f=keys]")`));
+  await js(`const k = $("#padEdit [data-f=keys]"); k.value = "ctrl+"; k.dispatchEvent(new Event("input", {bubbles: true})); await T.wait(700);`);
+  check("an unfinished hotkey is reported next to the editor, not saved", await js(`return $("#padErr").classList.contains("err")`) &&
+    (await js(`return (await api("/pad")).configs.akp03.keys[1].action.type`)) !== "hotkey");
+  await js(`const k = $("#padEdit [data-f=keys]"); k.value = "ctrl+shift+m"; k.dispatchEvent(new Event("input", {bubbles: true})); await T.wait(700);`);
+  const act = await js(`return (await api("/pad")).configs.akp03.keys[1].action`);
+  check("a finished hotkey is saved", act.type === "hotkey" && act.keys === "ctrl+shift+m", JSON.stringify(act));
+  await js(`$('#padView [data-key="0"]').click(); await T.wait(100); $("#padTest").click(); await T.wait(900);`);
+  check("Run it now starts the key's effect", (await js(`return (await api("/status")).effect`)) === "rainbow");
+  await js(`$('#padView [data-knob="0"]').click(); await T.wait(100);`);
+  check("a knob has turn-left / turn-right / press actions", await js(`return $$("#padEdit .pact").length === 3`));
+  await js(`T.set("#padEdit [data-act=press] [data-f=type]", "notify"); await T.wait(700);`);
+  check("knob actions are saved", (await js(`return (await api("/pad")).configs.akp03.knobs[0].press.type`)) === "notify");
+  await js(`const b = $("#padBright"); b.value = 55; b.dispatchEvent(new Event("input", {bubbles: true})); await T.wait(700);`);
+  check("pad brightness is saved", (await js(`return (await api("/pad")).configs.akp03.brightness`)) === 55);
+  await js(`$('#padFamily [data-v="akp153"]').click(); await T.wait(600);`);
+  check("the AKP153 layout has 18 screen keys", await js(`return $$("#padView .pkey.lcd").length === 18 && $$("#padView .pknob").length === 0`));
+  await shot("pad-akp153");
 
   // ---- other tabs still render
   for (const t of ["light", "live", "auto", "apps", "settings"]) await js(`showTab("${t}"); await T.wait(250);`);
