@@ -42,6 +42,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import numpy as np
+
 from . import settings as settings_mod
 from . import system
 from . import emulate  # registers the 'emulate' and 'keyboard' effects
@@ -49,7 +51,7 @@ from . import heatmap as heatmap_mod  # registers 'heatmap'
 from . import media  # registers 'nowplaying' (album colours)
 from . import games  # registers 'cs2' and 'dota2' (game lighting)
 from . import profiles
-from .effects import EFFECTS, Engine, NAMES
+from .effects import EFFECTS, GAMMA, Engine, NAMES
 from .keyboard import CONFIG_LEN, Keyboard
 from .layout import KEYS
 from .protocol import CMD_WRITE_CONFIG, MODES
@@ -72,6 +74,28 @@ def open_streams() -> int:
 
 def _hex(c) -> str:
     return "%02x%02x%02x" % tuple(int(max(0, min(1, v)) * 255 + 0.5) for v in c)
+
+
+LIFT_TO, LIFT_BELOW = 0x24 / 255, 0x30 / 255  # a lit key is drawn at least LIFT_TO bright; LIFT_BELOW up: as is
+
+
+def _preview_hex(c, raw: bool = False) -> str:
+    """A key's colour on the on-screen keyboard. raw: c is the LED value itself (else LED = c ** GAMMA). An LED lit
+    even at 1/255 glows on the keyboard while that colour looks black on a screen, so very dark lit keys are drawn
+    lighter (smoothly: their brightest channel goes from LIFT_TO up to LIFT_BELOW, hue kept); unlit keys are black."""
+    c = np.clip(np.asarray(c, dtype=float), 0.0, 1.0)
+    led = c if raw else c ** GAMMA
+    if float((led * 255 + 0.5).max()) < 1:
+        return "000000"
+    m = float(c.max())
+    if m < LIFT_BELOW:
+        c = c * ((LIFT_TO + (LIFT_BELOW - LIFT_TO) * m / LIFT_BELOW) / m)
+    return _hex(c)
+
+
+def _preview_hexes(hexes: dict) -> dict:
+    """Stored custom colours (LED values) as the preview draws them."""
+    return {n: _preview_hex(np.array([int(h[i:i + 2], 16) for i in (0, 2, 4)]) / 255, raw=True) for n, h in hexes.items()}
 
 
 def uses_stored_effect(effect: str, params: dict | None) -> bool:
@@ -479,15 +503,16 @@ class Controller:
         last = eng.last
         if last is not None:
             if self._frame[0] is not last:  # the engine only replaces `last` when the picture changed
+                raw = bool(getattr(eng.effect, "raw", False))
                 self._frame = (last, {"source": "live", "effect": eng.effect.name if eng.effect else None,
-                                      "colors": {n: _hex(c) for n, c in zip(NAMES, last)}})
+                                      "colors": {n: _preview_hex(c, raw) for n, c in zip(NAMES, last)}})
             return self._frame[1]
         try:
             info = self.info()
         except Exception:  # noqa: BLE001 - unplugged: the window says so instead of failing
             return {"source": "disconnected", "colors": {}}
         if info["mode_id"] == MODES["custom"]:
-            return {"source": "custom", "mode": info["mode"], "colors": self.kb.get_custom(0)}
+            return {"source": "custom", "mode": info["mode"], "colors": _preview_hexes(self.kb.get_custom(0))}
         key = tuple(info[k] for k in ("mode_id", "brightness", "speed", "direction", "random", "color", "variant"))
         if self._emu[0] != key:
             old = self._emu[1]
@@ -499,8 +524,9 @@ class Controller:
             self._emu = (key, emu, time.monotonic())
         _, emu, t0 = self._emu
         colors = emu.render(time.monotonic() - t0)
+        raw = isinstance(emu, emulate.FirmwareEmulated)  # LED values from the firmware (the approximation is not)
         return {"source": "hardware", "mode": info["mode"], "color": info["color"], "animated": info["mode"] != "normal",
-                "colors": {n: _hex(c) for n, c in zip(NAMES, colors)}}
+                "colors": {n: _preview_hex(c, raw) for n, c in zip(NAMES, colors)}}
 
 
 def make_handler(ctl: Controller):

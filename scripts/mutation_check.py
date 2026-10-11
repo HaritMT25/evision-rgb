@@ -298,6 +298,11 @@ MUTANTS = {
         '                self._first_contact()\n                self._battery_tick()', '                self._battery_tick()'),
     'usb: the status never says disconnected': ('evision_rgb/server.py',
         '                        st["keyboard"] = "connected" if ctl.kb.dev.connected else "disconnected"', '                        st["keyboard"] = "connected"'),
+    # -- the preview shows what glows
+    'faint keys: lit-but-faint keys drawn black in the preview': ('evision_rgb/server.py',
+        '    if m < LIFT_BELOW:', '    if False:'),
+    'faint keys: unlit keys drawn as dim colours in the preview': ('evision_rgb/server.py',
+        '    if float((led * 255 + 0.5).max()) < 1:\n        return "000000"', '    if False:\n        return "000000"'),
     # -- releases
     'release: a failing self-test check still passes the build': ('evision_rgb/gui/app.py',
         '    ok = all(c["ok"] for c in checks.values())', '    ok = True'),
@@ -316,7 +321,8 @@ HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_b
          "album:": ["test_feature_nowplaying"], "pad: the play key": ["test_feature_nowplaying"], "pad": ["test_feature_macropad"],
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
          "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
-         "release:": ["test_release"], "usb:": ["test_feature_reconnect"]}
+         "release:": ["test_release"], "usb:": ["test_feature_reconnect"],
+         "faint keys:": ["test_behavior"]}
 
 
 def coarse_timers() -> bool:

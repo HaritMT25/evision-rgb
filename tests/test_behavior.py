@@ -319,10 +319,10 @@ class ServerAPI(unittest.TestCase):
         self.assertIsNone(self.call("/settings")[1]["last_live"])
 
     def test_frame_mirrors_live_custom_and_hardware_states(self):
-        self.call("/effect", {"mode": "normal", "color": "112233", "brightness": 2})
+        self.call("/effect", {"mode": "normal", "color": "4488cc", "brightness": 2})
         f = self.call("/frame")[1]
         # the preview shows the stored colour at the stored brightness (2 of 4 -> 60 %)
-        self.assertEqual((f["source"], f["colors"]["Esc"]), ("hardware", "0a141f"))
+        self.assertEqual((f["source"], f["colors"]["Esc"]), ("hardware", "29527a"))
         self.call("/custom", {"colors": {"Esc": "ff0000"}})
         f = self.call("/frame")[1]
         self.assertEqual((f["source"], f["colors"]["Esc"], f["colors"]["Q"]), ("custom", "ff0000", "000000"))
@@ -330,6 +330,33 @@ class ServerAPI(unittest.TestCase):
         time.sleep(0.3)
         f = self.call("/frame")[1]
         self.assertEqual((f["source"], f["colors"]["Q"]), ("live", "00ff00"))
+
+    def test_a_faintly_lit_key_shows_faintly_in_the_preview(self):
+        # the user saw System monitor's dark-blue background glow on the keyboard but not on screen: the LED gets 1/255
+        # (a visible glow), while #000010 on a screen looks black
+        self.call("/run", {"effect": "solid", "params": {"color": "000010"}})
+        time.sleep(0.3)
+        q = self.call("/frame")[1]["colors"]["Q"]
+        self.assertNotEqual(q, "000000")
+        self.assertGreaterEqual(int(q[4:6], 16), 0x24, q)
+        self.assertEqual(int(q[0:4], 16), 0, "same hue")
+
+    def test_a_key_that_is_off_on_the_keyboard_is_black_in_the_preview(self):
+        self.call("/run", {"effect": "solid", "params": {"color": "000008"}})  # 0 after gamma: the LED is off
+        time.sleep(0.3)
+        self.assertEqual(self.call("/frame")[1]["colors"]["Q"], "000000")
+
+    def test_the_lift_is_smooth_dimmer_lit_keys_never_look_brighter(self):
+        from evision_rgb.server import _preview_hex
+        shown = [int(_preview_hex([0, 0, v / 255])[4:6], 16) for v in range(0, 80)]
+        lit = [s for s in shown if s]
+        self.assertEqual(lit, sorted(lit), "monotonic: a fading key only gets darker")
+        self.assertEqual(shown[60:], list(range(60, 80)), "ordinary colours unchanged")
+
+    def test_ordinary_colours_are_shown_as_they_are(self):
+        self.call("/run", {"effect": "solid", "params": {"color": "204060"}})
+        time.sleep(0.3)
+        self.assertEqual(self.call("/frame")[1]["colors"]["Q"], "204060")
 
     def test_live_key_overrides_sit_on_top_of_the_effect_and_clear(self):
         self.call("/run", {"effect": "solid", "params": {"color": "000000"}})
