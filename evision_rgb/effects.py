@@ -147,24 +147,36 @@ _VK = {**{0x41 + i: c for i, c in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ")},
 
 
 class KeyEvents:
-    """Global key-press listener (pynput). Calls callback(name) for keys on the AK820 layout."""
+    """Global key listener (pynput). Calls callback(name) once per physical press of a key on the
+    AK820 layout. Windows auto-repeat (key held) is ignored, matching what the keyboard firmware sees."""
 
     def __init__(self, callback):
         self.callback = callback
         self.listener = None
+        self.down: set[int] = set()
+
+    def key_down(self, vk):
+        if vk is None or vk in self.down:   # auto-repeat while held
+            return
+        self.down.add(vk)
+        name = _VK.get(vk)
+        if name in KEYS:
+            self.callback(name)
+
+    def key_up(self, vk):
+        self.down.discard(vk)
+
+    @staticmethod
+    def _vk(key):
+        vk = getattr(key, "vk", None)
+        if vk is None and hasattr(key, "value"):
+            vk = getattr(key.value, "vk", None)
+        return vk
 
     def start(self):
         from pynput import keyboard as kbd
-
-        def on_press(key):
-            vk = getattr(key, "vk", None)
-            if vk is None and hasattr(key, "value"):
-                vk = getattr(key.value, "vk", None)
-            name = _VK.get(vk)
-            if name in KEYS:
-                self.callback(name)
-
-        self.listener = kbd.Listener(on_press=on_press)
+        self.listener = kbd.Listener(on_press=lambda k: self.key_down(self._vk(k)),
+                                     on_release=lambda k: self.key_up(self._vk(k)))
         self.listener.daemon = True
         self.listener.start()
 

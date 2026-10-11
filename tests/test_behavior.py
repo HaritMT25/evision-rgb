@@ -457,3 +457,38 @@ class MCPServer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeyInput(unittest.TestCase):
+    """Key presses fed to effects must match what the keyboard firmware sees: one event per physical
+    press. Windows auto-repeat (holding a key) must not re-trigger (it made the Traverse preview
+    ripple twice)."""
+
+    def setUp(self):
+        from evision_rgb.effects import KeyEvents
+        self.got = []
+        self.ev = KeyEvents(self.got.append)
+
+    def test_one_physical_press_is_one_event(self):
+        self.ev.key_down(0x48)      # VK 'H'
+        self.ev.key_up(0x48)
+        self.assertEqual(self.got, ["H"])
+
+    def test_auto_repeat_while_held_is_ignored(self):
+        for _ in range(5):          # Windows repeats key-down while the key is held
+            self.ev.key_down(0x48)
+        self.ev.key_up(0x48)
+        self.assertEqual(self.got, ["H"])
+
+    def test_pressing_again_after_release_counts(self):
+        self.ev.key_down(0x48); self.ev.key_up(0x48)
+        self.ev.key_down(0x48); self.ev.key_up(0x48)
+        self.assertEqual(self.got, ["H", "H"])
+
+    def test_different_keys_are_independent(self):
+        self.ev.key_down(0x48); self.ev.key_down(0x4A); self.ev.key_down(0x48)
+        self.assertEqual(self.got, ["H", "J"])
+
+    def test_keys_not_on_the_keyboard_are_ignored(self):
+        self.ev.key_down(0x90)      # VK_NUMLOCK: the AK820 has no numpad
+        self.assertEqual(self.got, [])

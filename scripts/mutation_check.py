@@ -80,6 +80,9 @@ MUTANTS = {
     'speed: one continuous band (no gaps)': ('evision_rgb/emulate.py',
         'band = np.exp(-((x - pos) / 0.06) ** 2)',
         'band = np.ones(N)'),
+    'key input: Windows auto-repeat re-triggers effects (double ripple)': ('evision_rgb/effects.py',
+        'if vk is None or vk in self.down:   # auto-repeat while held',
+        'if vk is None:'),
 }
 
 failed_to_catch = []
