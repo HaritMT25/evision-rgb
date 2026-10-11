@@ -417,6 +417,19 @@ async function initAutomation() {
   $("#tStart").onclick = () => safe(() => api("/timer", { minutes: +$("#tMin").value, label: $("#tLabel").value }), "Timer started");
   $("#tCancel").onclick = () => safe(() => api("/timer", { cancel: true }), "Timer cancelled");
   $("#nTest").onclick = () => safe(() => api("/notify", { color: hex($("#nColor").value), flashes: 3, period: 0.35 }));
+  const hm = h => {
+    $("#hmOn").checked = h.enabled;
+    $("#hmStats").textContent = h.total ? `${h.total.toLocaleString()} presses since ${h.since} · most used: ${h.top.slice(0, 5).map(t => t[0]).join(", ")}`
+      : (h.enabled ? "Counting… type something." : "");
+  };
+  hm(await api("/heatmap"));
+  $("#hmOn").onchange = () => safe(async () => hm(await api("/heatmap", { enabled: $("#hmOn").checked })));
+  $("#hmShow").onclick = () => safe(() => api("/run", { effect: "heatmap" }), "Heatmap on the keyboard (Stop live to return)");
+  $("#hmClear").onclick = async () => {
+    if (await modal("Clear the heatmap?", "All key counts are deleted.", [["Cancel", false], ["Clear", true, "primary"]]))
+      hm(await api("/heatmap", { clear: true }));
+  };
+  setInterval(async () => { if (S.tab === "auto") hm(await api("/heatmap").catch(() => ({ enabled: false, total: 0 }))); }, 5000);
 }
 function renderTimer() {
   const t = S.status && S.status.timer;

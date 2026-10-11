@@ -105,6 +105,7 @@ class Emulation(unittest.TestCase):
         time.sleep(0.15)
         out = np.asarray(e.render(0.15))
         self.assertGreater(out[INDEX["h"]].max() + out[INDEX["g"]].max() + out[INDEX["j"]].max(), 0.5)
+        self.assertLess(out[INDEX["y"]].max() + out[INDEX["n"]].max(), 0.05, "rows above/below stay dark")
         time.sleep(0.35)
         out2 = np.asarray(e.render(0.5))
         self.assertGreater(out2[INDEX["a"]].max() + out2[INDEX["l"]].max(), 0.3, "travels both ways along the row")
@@ -117,6 +118,40 @@ class Emulation(unittest.TestCase):
         self.assertTrue(np.allclose(f[0][0], [0, 1, 1]))
         pink = frames(emu("surmount", color="00ffff", variant=0), secs=0.2)[0][0]
         self.assertGreater(pink[0], pink[1], "variant 1 is the light-pink preset")
+
+    def test_rain_drops_fall_down_the_columns(self):
+        # user: on the real keyboard drops fall; the old emulation only lit the top row
+        from evision_rgb.effects import Y
+        f = frames(emu("rain", color="00aaff"), secs=8, fps=30)
+        lit = f.max(axis=2) > 0.3
+        self.assertGreater(lit[:, Y > 0.7].any(axis=1).mean(), 0.3, "drops reach the bottom rows")
+        self.assertLess(lit.mean(), 0.35, "sparse drops, not the whole board")
+        below = {i: [j for j in range(N) if abs(X[j] - X[i]) < 0.035 and 0.1 < Y[j] - Y[i] < 0.3] for i in range(N)}
+        down = up = 0
+        for t in range(len(f) - 8):
+            for i in np.where(lit[t])[0]:
+                for j in below[i]:
+                    if not lit[t, j] and lit[t + 1:t + 8, j].any():
+                        down += 1
+            for j in range(N):
+                for i in [i for i in range(N) if j in below[i]]:
+                    if lit[t, j] and not lit[t, i] and lit[t + 1:t + 8, i].any():
+                        up += 1
+        self.assertGreater(down, 3 * max(up, 1), f"motion is downward (down={down}, up={up})")
+
+    def test_speed_sends_coloured_pulses_in_from_the_edge_with_gaps(self):
+        # user: colours come in from one edge and ripple across (direction picks the edge), with gaps
+        f = frames(emu("speed", direction=0), secs=4, fps=30)
+        g = f[:, INDEX["g"]]
+        self.assertLess(g.max(axis=1).min(), 0.1, "dark gaps between pulses")
+        self.assertGreater(g.max(axis=1).max(), 0.6)
+        lit_colours = {tuple(np.round(c * 3)) for c in g if c.max() > 0.6}
+        self.assertGreater(len(lit_colours), 2, "each pulse has its own colour")
+        def first_lit(frames_, key):
+            return int(np.argmax(frames_[:, INDEX[key]].max(axis=1) > 0.5))
+        self.assertLess(first_lit(f, "tab"), first_lit(f, "backslash"), "left-to-right enters on the left")
+        f1 = frames(emu("speed", direction=1), secs=4, fps=30)
+        self.assertLess(first_lit(f1, "backslash"), first_lit(f1, "tab"), "right-to-left enters on the right")
 
     def test_custom_mode_shows_the_stored_layout(self):
         from evision_rgb.emulate import emulator

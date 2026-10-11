@@ -25,6 +25,7 @@ DEFAULTS = {
     "custom_groups": [None, None, None],  # per-key layouts saved in the app (keyboard displays one)
     "custom_active": 0,
     "tray_hint_shown": False,
+    "heatmap_enabled": False,       # typing heatmap is opt-in (privacy)
 }
 
 

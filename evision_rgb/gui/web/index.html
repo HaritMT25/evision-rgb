@@ -141,6 +141,11 @@
             <div class="row" style="margin-bottom:18px"><label class="toggle"><input type="checkbox" data-a="mic_mute.enabled"><span></span></label>
               Microphone muted lights <select class="inp" style="width:auto" data-a="mic_mute.key"></select>
               <input type="color" data-a="mic_mute.color"></div>
+            <h2>Shortcut hints</h2>
+            <div class="row" style="margin-bottom:6px"><label class="toggle"><input type="checkbox" data-a="hints.enabled"><span></span></label>
+              Hold Ctrl / Alt / Shift / Win to light the shortcuts of the app in front</div>
+            <div class="row" style="margin:0 0 18px 52px">after <input class="inp" style="width:72px" type="number" min="0" max="3000" step="50" data-a="hints.delay_ms"> ms,
+              other keys at <input type="range" style="width:110px" min="0" max="1" step="0.05" data-a="hints.dim"><output data-o="hints.dim"></output></div>
             <h2>Timer / pomodoro</h2>
             <div class="row" style="margin-bottom:6px">
               <input class="inp" style="width:80px" type="number" min="1" max="600" value="25" id="tMin"> min
@@ -164,6 +169,11 @@
               Night mode from <input class="inp" style="width:auto" type="time" data-a="night.start"> to
               <input class="inp" style="width:auto" type="time" data-a="night.end"></div>
             <div class="row" style="margin-left:52px">brightness <input type="range" style="width:160px" min="0.05" max="1" step="0.05" data-a="night.brightness"><output data-o="night.brightness"></output></div>
+            <h2 style="margin-top:18px">Typing heatmap</h2>
+            <div class="row" style="margin-bottom:6px"><label class="toggle"><input type="checkbox" id="hmOn"><span></span></label>
+              Count key presses <span class="hint">(off by default; stores only per-key totals, never text)</span></div>
+            <div class="hint" id="hmStats" style="margin:0 0 8px 52px"></div>
+            <div class="row" style="margin-left:52px"><button class="btn" id="hmShow">Show heatmap</button><button class="btn" id="hmClear">Clear</button></div>
             <p class="hint" style="margin-top:14px">While an indicator, timer or dimming is active on top of a built-in effect, the app shows a live
               copy of your stored colours (built-in animations pause) and hands the keyboard back afterwards.</p>
           </div>

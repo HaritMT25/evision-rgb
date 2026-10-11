@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, urlparse
 from . import settings as settings_mod
 from . import system
 from . import emulate  # registers the 'emulate' effect
+from . import heatmap as heatmap_mod  # registers 'heatmap'
 from .effects import EFFECTS, Engine, NAMES
 from .keyboard import CONFIG_LEN
 from .layout import KEYS
@@ -47,7 +48,8 @@ def _hex(c) -> str:
 class Controller:
     """Shared state: engine (live effects), app profiles, automation, settings."""
 
-    def __init__(self, engine: Engine | None = None, probes: dict | None = None, automation_hz: float = 10):
+    def __init__(self, engine: Engine | None = None, probes: dict | None = None, automation_hz: float = 10,
+                 hook_keys: bool = True):
         self.engine = engine or Engine()
         self.kb = self.engine.kb
         self.lock = threading.RLock()
@@ -59,6 +61,11 @@ class Controller:
         self.auto_base = False  # True while a mirror was started only to show automation
         self._auto_stop = threading.Event()
         self._auto_hz = automation_hz
+        self.heatmap = heatmap_mod.KeyCounter(os.path.join(settings_mod.DIR, "heatmap.json"),
+                                              enabled=self.settings.get("heatmap_enabled", False))
+        self._hook = None
+        self._hook_keys = hook_keys
+        self._sync_key_hook()
         self.show_cb = None  # set by the desktop app: bring its window to front
         self.backup_dir = self.ensure_backup()
         self._info_cache = (0.0, None)
@@ -113,10 +120,35 @@ class Controller:
             except Exception as e:  # keyboard unplugged etc.: keep trying
                 print("automation:", repr(e))
 
+    def _sync_key_hook(self):
+        """Global key hook only while the heatmap is counting."""
+        want = self.heatmap.enabled and self._hook_keys
+        if want and self._hook is None:
+            from .effects import KeyEvents
+            self._hook = KeyEvents(self.heatmap.record)
+            self._hook.start()
+        elif not want and self._hook is not None:
+            self._hook.stop()
+            self._hook = None
+
+    def heatmap_status(self) -> dict:
+        counts = self.heatmap.counts()
+        top = sorted(counts.items(), key=lambda kv: -kv[1])[:10]
+        return {"enabled": self.heatmap.enabled, "total": sum(counts.values()), "since": self.heatmap.since,
+                "top": [list(kv) for kv in top], "counts": counts}
+
     def close(self):
         self._auto_stop.set()
+        self._sync_key_hook_off()
         self.stop_apps()
         self.engine.close()
+
+    def _sync_key_hook_off(self):
+        if self._hook is not None:
+            self._hook.stop()
+            self._hook = None
+        if self.heatmap.enabled:
+            self.heatmap.save()
 
     # -- app profiles
     def stop_apps(self):
@@ -226,6 +258,8 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.kb.get_custom(int(q.get("colorset", ["0"])[0])))
                     if u.path == "/settings":
                         return self._send(200, ctl.settings)
+                    if u.path == "/heatmap":
+                        return self._send(200, ctl.heatmap_status())
                     if u.path == "/automation":
                         return self._send(200, ctl.automation.cfg)
                     if u.path == "/conflicts":
@@ -258,6 +292,16 @@ def make_handler(ctl: Controller):
                         else:
                             ctl.automation.start_timer(float(req["minutes"]), req.get("label", ""))
                         return self._send(200, {"timer": ctl.automation.timer_status()})
+                    if p == "/heatmap":
+                        if req.get("clear"):
+                            ctl.heatmap.clear()
+                        if "enabled" in req:
+                            ctl.heatmap.enabled = bool(req["enabled"])
+                            ctl.update_settings({"heatmap_enabled": ctl.heatmap.enabled})
+                            ctl._sync_key_hook()
+                            if not ctl.heatmap.enabled:
+                                ctl.heatmap.save()
+                        return self._send(200, ctl.heatmap_status())
                     if p == "/automation":
                         cfg = ctl.automation.configure(req)
                         ctl.update_settings({"automation": cfg})
@@ -285,7 +329,10 @@ def make_handler(ctl: Controller):
                         if req.get("effect") not in EFFECTS:
                             raise ValueError(f"unknown effect {req.get('effect')!r}; choose from {list(EFFECTS)}")
                         ctl.stop_apps()
-                        st = engine.run(req["effect"], **req.get("params", {}))
+                        params = dict(req.get("params", {}))
+                        if req["effect"] == "heatmap" and "counts" not in params:
+                            params["counts"] = ctl.heatmap.counts()
+                        st = engine.run(req["effect"], **params)
                         if req.get("remember", True):  # previews (custom-key editing) are not remembered
                             ctl.remember_live(req["effect"], req.get("params", {}))
                         return self._send(200, st)

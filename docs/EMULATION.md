@@ -21,10 +21,10 @@ Please open an issue describing what the real effect does if one looks wrong.
 | 0C | Roll | vertical rainbow scroll | approximation |
 | 0D | Wave | rainbow wave (diagonal) | approximation |
 | 0E | Cartoon | cluster around H/J/K grows, fades, returns | **observed** |
-| 0F | Rain | drops falling down columns | approximation |
+| 0F | Rain | drops falling down the columns with a trail | **observed** |
 | 10 | Scan | bar scanning back and forth | approximation |
 | 11 | Surmount | static; byte 18 = style: 0 light pink, 1-2 presets (shades unconfirmed), 3 = chosen colour | **observed** (partly) |
-| 12 | Speed | fast rainbow streaks | approximation |
+| 12 | Speed | colour pulses enter from one edge (direction) and ripple across, gaps between | **observed** |
 | 14 | Custom | stored per-key layout | exact |
 
 Note: the **Random / multi-colour** flag (config byte 5) overrides the chosen colour in effects such as Traverse.

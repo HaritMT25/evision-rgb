@@ -19,6 +19,7 @@ import numpy as np
 
 from .effects import INDEX, N, X, Y
 from .keyboard import parse_color
+from .shortcuts import CATEGORY_COLOURS, hints as shortcut_hints
 
 DEFAULTS = {
     "caps_lock": {"enabled": True, "key": "CapsLock", "color": "ffffff"},
@@ -27,16 +28,19 @@ DEFAULTS = {
     "lock": {"enabled": True, "brightness": 0.0},
     "night": {"enabled": False, "start": "22:00", "end": "07:00", "brightness": 0.3},
     "timer": {"color": "00c0ff", "done_color": "ff3000"},
+    "hints": {"enabled": True, "delay_ms": 500, "dim": 0.3, "custom": {}},
 }
 NUMBER_ROW = np.array([i for i in range(N) if 0.1 < Y[i] < 0.35])
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+NEUTRAL_PROBES = {"caps": lambda: False, "mic_muted": lambda: False, "idle": lambda: 0.0, "locked": lambda: False,
+                  "now": lambda: dt.datetime(2026, 1, 1, 12), "modifiers": lambda: frozenset(), "app": lambda: ""}
+MOD_KEYS = {"ctrl": ("LCtrl", "RCtrl"), "shift": ("LShift", "RShift"), "alt": ("LAlt", "RAlt"), "win": ("LWin",)}
 
 
 # ------------------------------------------------------------------------------ probes (Windows)
 def default_probes() -> dict:
     if os.name != "nt":
-        return {"caps": lambda: False, "mic_muted": lambda: False, "idle": lambda: 0.0,
-                "locked": lambda: False, "now": dt.datetime.now}
+        return dict(NEUTRAL_PROBES, now=dt.datetime.now)
     import ctypes
     import ctypes.wintypes as wt
     user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
@@ -60,7 +64,28 @@ def default_probes() -> dict:
         user32.CloseDesktop(h)
         return False
 
-    return {"caps": caps, "mic_muted": _MicProbe(), "idle": idle, "locked": locked, "now": dt.datetime.now}
+    def modifiers():
+        held = set()
+        for name, vks in (("ctrl", (0x11,)), ("shift", (0x10,)), ("alt", (0x12,)), ("win", (0x5B, 0x5C))):
+            if any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in vks):
+                held.add(name)
+        return frozenset(held)
+
+    return {"caps": caps, "mic_muted": _MicProbe(), "idle": idle, "locked": locked, "now": dt.datetime.now,
+            "modifiers": modifiers, "app": _AppProbe()}
+
+
+class _AppProbe:
+    """Foreground process name, refreshed at most twice a second (it is read every frame)."""
+
+    def __init__(self):
+        self.t, self.name = 0.0, ""
+
+    def __call__(self) -> str:
+        if time.monotonic() - self.t > 0.5:
+            from .apps import foreground
+            self.name, self.t = foreground()[0], time.monotonic()
+        return self.name
 
 
 class _MicProbe:
@@ -115,6 +140,11 @@ def validate(cfg: dict) -> dict:
         if not _HHMM.match(str(cfg["night"][f])):
             raise ValueError(f"night: {f} must be HH:MM")
     parse_color(cfg["timer"]["color"]); parse_color(cfg["timer"]["done_color"])
+    h = cfg["hints"]
+    if not 0 <= int(h["delay_ms"]) <= 5000 or not 0.0 <= float(h["dim"]) <= 1.0:
+        raise ValueError("hints: delay_ms 0..5000, dim 0..1")
+    if not isinstance(h.get("custom", {}), dict):
+        raise ValueError("hints: custom must be an object {app: {combo: {category: [keys]}}}")
     return cfg
 
 
@@ -127,9 +157,9 @@ class Automation:
 
     def __init__(self, config: dict | None = None, probes: dict | None = None):
         self.cfg = validate(_merge(DEFAULTS, config or {}))
-        given = dict(probes or {})
-        keys = ("caps", "mic_muted", "idle", "locked", "now")
-        self.probes = given if all(k in given for k in keys) else {**default_probes(), **given}
+        # explicit probes (tests): anything missing is neutral; no probes: read the real machine
+        self.probes = {**default_probes()} if probes is None else {**NEUTRAL_PROBES, **probes}
+        self._mods, self._mods_since = frozenset(), 0.0
         self.lock = threading.Lock()
         self.flashes: list[dict] = []
         self.timer: dict | None = None
@@ -197,6 +227,16 @@ class Automation:
             f = min(f, float(idle["brightness"]))
         return f
 
+    def _hints(self, t: float) -> tuple[dict, frozenset]:
+        """Shortcut hints for the held modifiers once they have been held for delay_ms."""
+        h = self.cfg["hints"]
+        mods = frozenset(self.probes["modifiers"]()) if h["enabled"] else frozenset()
+        if mods != self._mods:
+            self._mods, self._mods_since = mods, t
+        if not mods or t - self._mods_since < int(h["delay_ms"]) / 1000:
+            return {}, mods
+        return shortcut_hints(self.probes["app"](), mods, h.get("custom")), mods
+
     def _indicators(self) -> list[tuple[int, np.ndarray]]:
         out = []
         c = self.cfg
@@ -211,7 +251,7 @@ class Automation:
         t = time.monotonic() if t is None else t
         with self.lock:
             self._tick(t)
-            return bool(self.flashes or self.timer or t < self.done_until or self._indicators()
+            return bool(self.flashes or self.timer or t < self.done_until or self._indicators() or self._hints(t)[0]
                         or self._power_factor() < 1.0 or self._night_factor() < 1.0)
 
     def apply(self, colors, t: float) -> np.ndarray:
@@ -234,6 +274,15 @@ class Automation:
                         out[:] = f["rgb"]
                     else:
                         out[f["idx"]] = f["rgb"]
+            hint, mods = self._hints(t)
+            if hint:
+                out *= float(self.cfg["hints"]["dim"])
+                for key, cat in hint.items():
+                    if key.lower() in INDEX:
+                        out[INDEX[key.lower()]] = _rgb(CATEGORY_COLOURS.get(cat, "ffffff"))
+                for m in mods:
+                    for key in MOD_KEYS.get(m, ()):
+                        out[INDEX[key.lower()]] = 1.0
             for i, rgb in self._indicators():
                 out[i] = rgb
             out *= self._power_factor()

@@ -49,8 +49,7 @@ class Emulated(Effect):
         self.lock = threading.Lock()
         self.events = KeyEvents(self.press) if self.mode in ("reaction", "ripples", "traverse") else None
         self.sparks = np.zeros(N)
-        self.below = [np.array([j for j in range(N) if abs(X[j] - X[i]) < 0.03 and 0 < Y[j] - Y[i] < 0.25], dtype=int)
-                      for i in range(N)] if self.mode == "rain" else None
+        self.drops: list[list[float]] = []  # rain: [column x, head y, speed, hue]
         self.last_t = 0.0
 
     @staticmethod
@@ -99,8 +98,15 @@ class Emulated(Effect):
             out = hsv((x + YY) * 0.7 - t * 0.25 * r)
         elif m == "roll":
             out = hsv(Y * 0.8 - t * 0.3 * r)
-        elif m == "speed":
-            out = hsv(x * 2.0 - t * 1.2 * r)
+        elif m == "speed":  # observed: colour pulses enter from one edge and ripple across, gaps between
+            period, v = 0.7 / r, 1.2 * r
+            out = np.zeros((N, 3))
+            for k in range(int(t // period) - 2, int(t // period) + 1):
+                if k < 0:
+                    continue
+                pos = (t - k * period) * v
+                band = np.exp(-((x - pos) / 0.06) ** 2)
+                out = np.maximum(out, band[:, None] * hsv(np.array([self.hue0 + 0.17 * k]))[0])
         elif m == "serpentine":
             path = np.where((np.round(Y * 5) % 2) == 0, x, 1 - x) / 6 + np.round(Y * 5) / 6
             out = hsv(path * 1.5 - t * 0.3 * r)
@@ -136,16 +142,22 @@ class Emulated(Effect):
             d = np.hypot(X - X[j], YY - YY[j])
             v = np.clip(1 - d / radius, 0, 1) * fade
             out = v[:, None] * hsv(np.full(N, self.hue0 + 0.23 * cycle + d))
-        elif m in ("stars", "flowers", "rain"):
+        elif m == "rain":  # drops fall down the columns with a short trail
+            if self.rng.random() < dt * 2.5 * r:
+                self.drops.append([self.rng.choice(X), -0.05, 0.9 + 0.4 * self.rng.random(), self.rng.random()])
+            out = np.zeros((N, 3))
+            for d in self.drops:
+                d[1] += dt * d[2] * r
+                above = d[1] - Y
+                v = np.where((np.abs(X - d[0]) < 0.04) & (above >= -0.05) & (above < 0.35),
+                             np.exp(-np.maximum(above, 0) / 0.12), 0.0)
+                col = hsv(np.array([d[3]]))[0] if self.random else self.rgb
+                out = np.maximum(out, v[:, None] * col)
+            self.drops = [d for d in self.drops if d[1] < 1.4]
+        elif m in ("stars", "flowers"):
             decay = math.exp(-dt * 2.5 * r)
             self.sparks *= decay
             births = self.rng.random(N) < dt * (0.25 if m == "stars" else 0.6) * r
-            if m == "rain":  # drops start on the top row and fall down their column
-                births &= Y < 0.05
-                falling = self.sparks > 0.05
-                for i in np.where(falling & (self.rng.random(N) < dt * 6 * r))[0]:
-                    js = self.below[i]
-                    self.sparks[js] = np.maximum(self.sparks[js], self.sparks[i])
             self.sparks[births] = 1.0
             col = hsv(self.rng.random(N)) if (self.random or m == "flowers") else np.tile(self.rgb, (N, 1))
             if not hasattr(self, "_col") or self._col.shape != col.shape:
