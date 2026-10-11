@@ -20,7 +20,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/Scripts/python -m pip install --upgrade pip
-          .venv/Scripts/python -m pip install -c scripts/app-constraints.txt -e ".[app,dev]"
+          .venv/Scripts/python -m pip install -c scripts/app-constraints.txt -e ".[app,dev,mcp]"
       - name: Version matches the tag
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash

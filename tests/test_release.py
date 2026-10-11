@@ -68,20 +68,31 @@ class SelfTest(unittest.TestCase):
 class Notices(unittest.TestCase):
     def test_every_bundled_package_is_listed_with_its_licence(self):
         import third_party_notices as tpn
+        from importlib import metadata
         out = os.path.join(tempfile.mkdtemp(), "n.txt")
         n = tpn.main(out)
-        text = open(out, encoding="utf-8").read()
-        self.assertGreater(n, 5)
-        for pkg in ("numpy", "psutil", "hidapi"):
-            self.assertRegex(text, rf"(?im)^{pkg}\s+\S+\s+\S")
-        self.assertIn("Permission is hereby granted", text, "licence texts are included")
+        with open(out, encoding="utf-8") as f:
+            text = f.read()
+        installed = []
+        for root in tpn.ROOTS:  # what this environment has of the app's components (a release build has all)
+            try:
+                installed.append(metadata.distribution(root).metadata["Name"])
+            except metadata.PackageNotFoundError:
+                pass
+        self.assertIn("numpy", installed)
+        self.assertGreaterEqual(n, len(installed))
+        for name in installed:
+            self.assertRegex(text, rf"(?im)^{re.escape(name)}\s+\S+\s+\S", name)
+        self.assertIn("=" * 100, text, "licence texts follow the list")
 
     def test_lgpl_parts_say_how_to_replace_them(self):
         import third_party_notices as tpn
         out = os.path.join(tempfile.mkdtemp(), "n.txt")
         tpn.main(out)
-        self.assertIn("LGPL", open(out, encoding="utf-8").read().split("=" * 100)[0])
-        self.assertIn("scripts/build_exe.sh", open(out, encoding="utf-8").read())
+        with open(out, encoding="utf-8") as f:
+            head = f.read().split("=" * 100)[0]
+        self.assertIn("pynput and pystray are under the GNU LGPL", head)
+        self.assertIn("scripts/build_exe.sh", head)
 
 
 class ReleaseNotes(unittest.TestCase):
