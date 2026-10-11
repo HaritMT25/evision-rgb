@@ -111,7 +111,17 @@ class Emulated(Effect):
             pos = pos % 1 if m == "traverse" else pos
             band = np.exp(-((x - pos) / 0.07) ** 2)
             out = band[:, None] * (hsv(np.full(N, t * 0.1)) if self.random else self.rgb)
-        elif m in ("stars", "flowers", "cartoon", "rain"):
+        elif m == "cartoon":  # observed: a cluster around H/J/K grows, fades away, comes back (new colour)
+            period = 3.0 / r
+            cycle, p = divmod(t, period)
+            p /= period
+            radius = 0.06 + 0.3 * min(1.0, p / 0.6)
+            fade = 1.0 if p < 0.6 else max(0.0, 1 - (p - 0.6) / 0.35)
+            j = INDEX["j"]
+            d = np.hypot(X - X[j], YY - YY[j])
+            v = np.clip(1 - d / radius, 0, 1) * fade
+            out = v[:, None] * hsv(np.full(N, self.hue0 + 0.23 * cycle + d))
+        elif m in ("stars", "flowers", "rain"):
             decay = math.exp(-dt * 2.5 * r)
             self.sparks *= decay
             births = self.rng.random(N) < dt * (0.25 if m == "stars" else 0.6) * r
@@ -122,7 +132,7 @@ class Emulated(Effect):
                     js = self.below[i]
                     self.sparks[js] = np.maximum(self.sparks[js], self.sparks[i])
             self.sparks[births] = 1.0
-            col = hsv(self.rng.random(N)) if (self.random or m in ("flowers", "cartoon")) else np.tile(self.rgb, (N, 1))
+            col = hsv(self.rng.random(N)) if (self.random or m == "flowers") else np.tile(self.rgb, (N, 1))
             if not hasattr(self, "_col") or self._col.shape != col.shape:
                 self._col = col
             self._col[births] = col[births]

@@ -86,6 +86,16 @@ class Emulation(unittest.TestCase):
         after = np.asarray(e.render(0.05))[INDEX["w"]].max()
         self.assertGreater(after, before + 0.3)
 
+    def test_cartoon_is_a_cluster_around_h_j_k_that_grows_fades_and_returns(self):
+        # user observation on the real AK820 (fw V0103)
+        f = frames(emu("cartoon"), secs=8, fps=20)
+        centre = f[:, [INDEX["h"], INDEX["j"], INDEX["k"]]].max(axis=2).mean(axis=1)
+        edge = f[:, [INDEX["esc"], INDEX["right"], INDEX["lctrl"]]].max(axis=2).mean(axis=1)
+        self.assertGreater(centre.max(), 0.6, "cluster lights the centre")
+        self.assertLess(centre.min(), 0.15, "then goes away")
+        self.assertGreater(((centre[1:] > 0.4) & (centre[:-1] <= 0.4)).sum(), 1, "and comes back repeatedly")
+        self.assertGreater(centre.mean(), edge.mean() * 2, "it is a cluster, not the whole board")
+
     def test_custom_mode_shows_the_stored_layout(self):
         from evision_rgb.emulate import emulator
         e = emulator({"mode": MODES["custom"], "brightness": 4, "speed": 0, "direction": 0, "random": 0,

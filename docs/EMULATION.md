@@ -1,0 +1,28 @@
+# Built-in effect emulation: fidelity checklist
+
+The keyboard renders its 18 built-in effects internally. The app approximates them on the PC for the
+on-screen preview and as the base under overlays (Caps Lock, timers, notifications).
+Rows marked *observed* were matched to a description of the real AK820 (fw V0103). The rest are approximations.
+Please open an issue describing what the real effect does if one looks wrong.
+
+| id | effect | emulation | status |
+|---|---|---|---|
+| 01 | Corrugated | horizontal rainbow wave | looks right (user) |
+| 02 | Cloud | drifting soft colour blobs | approximation |
+| 03 | Serpentine | rainbow along a snake path | approximation |
+| 04 | Spectrum | diagonal rainbow | approximation |
+| 05 | Breath | fade in/out in the colour (hue cycles if random) | approximation |
+| 06 | Normal | steady colour | exact |
+| 07 | Reaction | pressed keys flash and fade | approximation |
+| 08 | Ripples | ring from the pressed key | approximation |
+| 09 | Traverse | bar sweeping across | approximation |
+| 0A | Stars | random twinkles | approximation |
+| 0B | Flowers | random multicolour blooms | approximation |
+| 0C | Roll | vertical rainbow scroll | approximation |
+| 0D | Wave | rainbow wave (diagonal) | approximation |
+| 0E | Cartoon | cluster around H/J/K grows, fades, returns | **observed** |
+| 0F | Rain | drops falling down columns | approximation |
+| 10 | Scan | bar scanning back and forth | approximation |
+| 11 | Surmount | colour fill rising and falling | approximation |
+| 12 | Speed | fast rainbow streaks | approximation |
+| 14 | Custom | stored per-key layout | exact |
