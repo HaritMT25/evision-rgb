@@ -1,5 +1,8 @@
 name: tests
-on: [push, pull_request]
+on:  # version tags are tested by the release workflow
+  push:
+    branches: ["**"]
+  pull_request:
 concurrency:  # a newer push supersedes a run still going (it checks everything again)
   group: tests-${{ github.ref }}
   cancel-in-progress: true
