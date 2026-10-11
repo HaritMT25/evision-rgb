@@ -30,6 +30,7 @@ DEFAULTS = {
     "layers_draft": None,         # the layer editor's current stack (list of layers), kept between sessions
     "pads": {},                   # macro pad set-up per family: {"akp03": {"brightness", "keys", "knobs"}}
     "games": {"auto": True},      # game lighting; + "token" (made on first use, the games' config files carry it)
+    "openrgb": {"enabled": False, "port": 6742},  # OpenRGB SDK server for Artemis, SignalRGB's bridge, Home Assistant
 }
 
 

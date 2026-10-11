@@ -198,7 +198,7 @@ function modeLabel(name) { return (name || "").replace(/_/g, " ").replace(/\b\w/
 // a live effect's name as the app shows it ("nowplaying" -> "Album colours")
 function effectLabel(id) {
   const names = { layers: "Layer stack", heatmap: "Typing heatmap", emulate: "Keyboard effect copy", keyboard: "Keyboard's own effect",
-    cs2: "CS2 game lighting", dota2: "Dota 2 game lighting" };
+    cs2: "CS2 game lighting", dota2: "Dota 2 game lighting", openrgb: "OpenRGB program" };
   const e = EFFECTS.find(x => x.id === id);
   return e ? e.name : names[id] || modeLabel(id);
 }
@@ -821,6 +821,24 @@ function initApps() {
 }
 
 // ------------------------------------------------------------------ settings tab
+// OpenRGB SDK server (Other Settings)
+async function orgbLoad() {
+  const s = await api("/openrgb");
+  $("#orgbOn").checked = !!s.enabled;
+  if (document.activeElement !== $("#orgbPort")) $("#orgbPort").value = s.port;
+  $("#orgbState").textContent = s.error ? s.error : !s.enabled ? "Off."
+    : `Listening on 127.0.0.1:${s.port} · ` + (s.clients.length ? `connected: ${s.clients.join(", ")}` : "no program connected yet");
+}
+function initOpenRGB() {
+  const save = () => safe(async () => {
+    await api("/openrgb", { enabled: $("#orgbOn").checked, port: Math.max(1, Math.min(65535, +$("#orgbPort").value || 6742)) });
+    await orgbLoad();
+  });
+  $("#orgbOn").onchange = save;
+  $("#orgbPort").onchange = save;
+  orgbLoad().catch(() => { });
+  setInterval(() => { if (S.tab === "settings" && !document.hidden) orgbLoad().catch(() => { }); }, 3000);
+}
 async function initSettings() {
   const a = await api("/autostart");
   $("#sAuto").checked = a.enabled;
@@ -1176,7 +1194,7 @@ document.addEventListener("keydown", e => {
 });
 async function boot() {
   [S.layout, S.modes, S.settings] = await Promise.all([fetch("ui/layout.json").then(r => r.json()), api("/modes"), api("/settings")]);
-  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); initPad(); initGames(); await initAutomation();
+  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); initPad(); initGames(); initOpenRGB(); await initAutomation();
   await initSettings();
   $$("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#conflictPill").onclick = () => showTab("settings");

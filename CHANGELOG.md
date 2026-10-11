@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 (2026-10-11)
+- **Fix: the keyboard reconnects by itself** after it is replugged or its USB connection is reset (sleep, power
+  saving). Before, the app kept sending into a dead connection until it was restarted, so the keyboard stayed on its
+  own effect whatever you chose. The app also starts without the keyboard and takes over when it is plugged in; the
+  status line says when it is disconnected.
+- **OpenRGB programs**: the app can answer as an OpenRGB SDK server (Other Settings), so Artemis, SignalRGB with its
+  OpenRGB bridge, Home Assistant and OpenRGB scripts light the keyboard through it. Indicators stay on top and your
+  lighting comes back when they close. See docs/OPENRGB.md.
+- The preview shows keys that glow faintly on the keyboard (like System monitor's dark background) instead of black.
+- `evrgb live` knows the game and OpenRGB effects.
+
 ## 0.4.0 (2026-10-11)
 - **Game lighting** for Counter-Strike 2 and Dota 2 from Valve's Game State Integration: health, ammo, the bomb
   timer, team colour, flashbangs and hits; Dota abilities, items, cooldowns and the respawn countdown. One click

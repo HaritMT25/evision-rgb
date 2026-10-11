@@ -48,7 +48,11 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
   key or knob turn. Actions include lighting profiles, effects, the layer stack, keyboard brightness, media keys,
   hotkeys, a timer and launching programs. The key whose effect is running gets a frame. Set it up in the app before
   the pad arrives.
+- **OpenRGB programs**: the app can answer as an OpenRGB SDK server, so Artemis, SignalRGB (with its OpenRGB bridge),
+  Home Assistant and OpenRGB scripts light the keyboard through it, with indicators on top. See
+  [docs/OPENRGB.md](docs/OPENRGB.md).
 - **Desktop app**: AJAZZ-style UI with a live preview of the keyboard, tray icon, start with Windows, conflict detector.
+  It reconnects by itself when the keyboard is replugged or the PC wakes up, and starts without the keyboard.
 - **For agents and scripts**: a local HTTP JSON API and an **MCP server**, so Claude or another agent can drive the lights.
 - **Safe by design**: only commands confirmed from the vendor app are on the keyboard's allow-list. Firmware-update,
   keymap and macro writes are never sent, and everything written is read back and verified. Pads get only the
@@ -111,7 +115,7 @@ with Keyboard() as kb:
 ## HTTP API & MCP
 `GET /status /info /keys /effects /modes /frame /stream /custom /settings /profiles /profiles/export` ·
 `POST /effect /custom /run /keys /clear /stop /apps /notify /timer /automation /heatmap /profiles/import /profiles/apply /restore`.
-Game lighting: the game posts to `POST /game/cs2` / `/game/dota2` (with the token from its config file);
+`GET|POST /openrgb {"enabled": true, "port": 6742}` runs the OpenRGB SDK server. Game lighting: the game posts to `POST /game/cs2` / `/game/dota2` (with the token from its config file);
 `GET /games` shows what is installed and set up, `POST /games/setup {"game": "cs2"}` / `/games/remove` write or delete
 the config file. `GET /nowplaying` says what is playing (title, artist, app, cover colours) and `/nowplaying/cover.png` serves the
 cover. `GET /status` includes `battery` (`on_battery`, `saver`, `paused`); `POST /automation {"battery": {"enabled": false}}`

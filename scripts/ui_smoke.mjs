@@ -219,6 +219,14 @@ try {
   await js(`$('.card[data-game="cs2"] [data-remove]').click(); await T.wait(700);`);
   check("Remove set-up deletes it again", await js(`return !!$('.card[data-game="cs2"] [data-setup]')`));
 
+  // ---- OpenRGB programs (Other Settings), on a high port so nothing real is disturbed
+  await js(`showTab("settings"); await T.wait(500); $("#orgbPort").value = 47421; $("#orgbOn").checked = true;
+            $("#orgbOn").dispatchEvent(new Event("change")); await T.wait(900);`);
+  check("the OpenRGB server can be switched on", /Listening on 127\.0\.0\.1:47421/.test(await js(`return $("#orgbState").textContent`)),
+    await js(`return $("#orgbState").textContent`));
+  await js(`$("#orgbOn").checked = false; $("#orgbOn").dispatchEvent(new Event("change")); await T.wait(900);`);
+  check("and off again", (await js(`return $("#orgbState").textContent`)) === "Off.");
+
   // ---- battery saver & still pictures
   await js(`showTab("auto"); await T.wait(1300);`);
   check("the battery saver switch is on by default", await js(`return $('[data-a="battery.enabled"]').checked === true`));

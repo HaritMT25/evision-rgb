@@ -274,6 +274,13 @@
           <div>
             <h2>Device</h2>
             <div class="kv" id="devInfo"></div>
+            <h2 style="margin-top:18px">OpenRGB programs</h2>
+            <div class="row" style="margin-bottom:6px"><label class="toggle"><input type="checkbox" id="orgbOn"><span></span></label>
+              Let programs that speak OpenRGB light the keyboard</div>
+            <p class="hint" style="margin:0 0 6px 52px">Artemis, SignalRGB with its OpenRGB bridge, Home Assistant and OpenRGB
+              scripts connect to this app as if it were OpenRGB. Indicators stay on top; your lighting comes back when they close.</p>
+            <div class="row" style="margin-left:52px">port <input class="inp" style="width:90px" type="number" min="1" max="65535" id="orgbPort"></div>
+            <div class="hint" id="orgbState" style="margin:6px 0 0 52px"></div>
             <h2 style="margin-top:18px">For AI agents</h2>
             <p class="hint">HTTP API on <code>http://127.0.0.1:8820</code> while this app runs. MCP server:
               <code>python -m evision_rgb.mcp_server</code>.</p>

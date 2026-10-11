@@ -24,6 +24,7 @@ GET  /nowplaying | /nowplaying/cover.png       what this PC is playing (title, a
 POST /game/cs2 | /game/dota2                  the game's own state (Valve Game State Integration; needs the token)
 GET  /games    POST /games {"auto": true}     game lighting status / switch on automatically while you play
 POST /games/setup {"game": "cs2"} | /games/remove {"game": "cs2"}   write / delete our config file in the game
+GET|POST /openrgb {"enabled": true, "port": 6742}   OpenRGB SDK server (Artemis, SignalRGB bridge, Home Assistant)
 GET  /pad | /pad/key.png?model=akp03&i=0      macro pad state, configs, supported models / a key image
 POST /pad {"model": "akp03", "brightness": 80, "keys": [...], "knobs": [...]}   POST /pad/key {"model", "index", "key"}
 POST /pad/press {"model": "akp03", "key": 0} | {"knob": 1, "move": "left|right|press"}   run what it is set to
@@ -50,8 +51,10 @@ from . import emulate  # registers the 'emulate' and 'keyboard' effects
 from . import heatmap as heatmap_mod  # registers 'heatmap'
 from . import media  # registers 'nowplaying' (album colours)
 from . import games  # registers 'cs2' and 'dota2' (game lighting)
+from . import openrgb  # registers 'openrgb' (colours from OpenRGB clients)
 from . import profiles
 from .effects import EFFECTS, GAMMA, Engine, NAMES
+from . import __version__
 from .keyboard import CONFIG_LEN, Keyboard
 from .layout import KEYS
 from .protocol import CMD_WRITE_CONFIG, MODES
@@ -147,6 +150,13 @@ class Controller:
         self._game_dismissed = None  # you chose other lighting during this game: don't take over again
         from .macropad import PadManager
         self.pads = PadManager(self)  # started by the app / `evrgb serve` (start_pads), never by tests
+        self.ext_on = False          # an OpenRGB client has the lighting
+        self.ext_prev = None         # what ran before it (comes back when the client leaves)
+        self._ext_dismissed = False  # you chose other lighting: client frames wait until it switches to Direct again
+        self.openrgb = openrgb.OpenRGBServer(self)
+        cfg = self.settings.get("openrgb") or {}
+        if cfg.get("enabled"):
+            self.openrgb.start(int(cfg.get("port", 6742)))
         threading.Thread(target=self._automation_loop, daemon=True).start()
 
     def start_pads(self):
@@ -263,10 +273,119 @@ class Controller:
         self._give_back(p)
 
     def _lighting_chosen(self):
-        """The user picked the lighting: nothing the battery saver or a game paused comes back over it."""
+        """The user picked the lighting: nothing the battery saver, a game or an OpenRGB client paused comes back
+        over it."""
         self.battery_paused = None
         if self.game_on:
             self._game_dismissed, self.game_on, self.game_prev = self.game_on, None, None
+        if self.ext_on:
+            self.ext_on, self.ext_prev, self._ext_dismissed = False, None, True
+
+    # -- OpenRGB clients (openrgb.OpenRGBServer calls these)
+    def openrgb_status(self) -> dict:
+        cfg = {"enabled": False, "port": 6742, **(self.settings.get("openrgb") or {})}
+        addr = self.openrgb.address
+        return {"enabled": bool(cfg["enabled"]), "port": addr[1] if addr else cfg["port"], "listening": addr is not None,
+                "clients": self.openrgb.clients(), "error": self.openrgb.error}
+
+    def configure_openrgb(self, patch: dict) -> dict:
+        cfg = {"enabled": False, "port": 6742, **(self.settings.get("openrgb") or {})}
+        if "enabled" in patch:
+            if not isinstance(patch["enabled"], bool):
+                raise ValueError("enabled must be true or false")
+            cfg["enabled"] = patch["enabled"]
+        if "port" in patch:
+            if isinstance(patch["port"], bool) or not isinstance(patch["port"], int) or not 0 <= patch["port"] <= 65535:
+                raise ValueError("port must be a number from 0 to 65535")
+            cfg["port"] = patch["port"]
+        self.update_settings({"openrgb": cfg})
+        if cfg["enabled"]:
+            self.openrgb.start(cfg["port"])
+        else:
+            self.openrgb.stop()
+            self.openrgb.error = None
+        return self.openrgb_status()
+
+    def orgb_state(self) -> dict:
+        try:
+            info = self.info()
+        except Exception:  # noqa: BLE001 - unplugged: still describe the keyboard
+            info = {}
+        eng = self.engine
+        modes = openrgb.modes_for(info)
+        direct = eng.effect is not None and eng.effect.name == "openrgb"
+        active = 0 if direct else next((i for i, m in enumerate(modes) if m["value"] == info.get("mode_id")), 0)
+        return {"name": "AJAZZ AK820", "vendor": "AJAZZ", "description": "EVision V2 keyboard (through EVision RGB)",
+                "version": f"EVision RGB {__version__}", "location": "HID 320F:505B", "modes": modes, "active": active,
+                "colors": (openrgb.current_colors() * 255 + 0.5).astype(int).tolist()}
+
+    def _orgb_take(self):
+        """An OpenRGB client gets the lighting (unless you chose other lighting since it last switched to Direct)."""
+        eng = self.engine
+        if self._ext_dismissed or (eng.effect is not None and eng.effect.name == "openrgb"):
+            return
+        if self.game_on:  # the lighting from before the game is what comes back later
+            prev, self.game_on, self.game_prev = self.game_prev, None, None
+            eng.stop()
+        else:
+            prev = self._take_lighting()
+        if not self.ext_on:
+            self.ext_prev = prev
+        self.ext_on = True
+        self.stop_apps()
+        eng.run("openrgb")
+        self.auto_base = False
+
+    def orgb_colors(self, conn, colors, start: int):
+        openrgb.set_colors(colors, start)
+        with self.lock:
+            self._orgb_take()
+
+    def orgb_direct(self, conn):
+        with self.lock:
+            self._ext_dismissed = False
+            self._orgb_take()
+
+    def orgb_mode(self, conn, index: int, mode: dict):
+        modes = openrgb.modes_for({})
+        if index == 0 or mode.get("name") == "Direct":
+            return self.orgb_direct(conn)
+        if not 0 < index < len(modes):
+            return
+        fields = {"mode": modes[index]["value"], "brightness": max(0, min(4, int(mode.get("brightness", 4))))}
+        if modes[index]["flags"] & openrgb.F_SPEED:
+            fields["speed"] = max(0, min(4, int(mode.get("speed", 2))))
+            fields["direction"] = 1 if mode.get("direction") == openrgb.DIR_LEFT else 0
+            fields["random"] = mode.get("color_mode") == openrgb.COLORS_RANDOM
+        if mode.get("colors"):
+            fields["color"] = "%02x%02x%02x" % tuple(mode["colors"][0])
+        with self.lock:
+            self.ext_on, self.ext_prev = False, None  # the client chose a built-in effect: nothing to give back
+            self.set_hardware(**fields)
+            self._ext_dismissed = True  # its colours wait until it switches to Direct again
+
+    def orgb_profiles(self) -> list[str]:
+        return [p["name"] for p in self.settings.get("profiles") or [] if isinstance(p.get("name"), str)]
+
+    def orgb_load_profile(self, name: str):
+        p = self.find_profile(name)
+        if p is not None:
+            with self.lock:
+                self.apply_profile(p)
+
+    def orgb_left(self, conn):
+        if self.openrgb.clients():  # others are still connected
+            return
+        with self.lock:
+            self._ext_dismissed = False
+            if not self.ext_on:
+                return
+            eng = self.engine
+            mine = eng.effect is not None and eng.effect.name == "openrgb"
+            prev, self.ext_on, self.ext_prev = self.ext_prev, False, None
+            if mine:
+                eng.stop()
+                self._give_back(prev)
 
     # -- game lighting: switches on by itself while you play (Valve Game State Integration)
     def games_settings(self) -> dict:
@@ -277,6 +396,8 @@ class Controller:
         return g
 
     def _games_tick(self):
+        if self.ext_on:  # an OpenRGB program has the lighting
+            return
         cfg = self.settings.get("games") or {}
         playing = next((g for g in games.GAMES if games.feed(g).active()), None) if cfg.get("auto", True) else None
         with self.lock:
@@ -357,6 +478,7 @@ class Controller:
     def close(self):
         self._auto_stop.set()
         self.pads.stop()
+        self.openrgb.stop()
         prev = emulate.set_stored_effect(None)
         if prev != self._emulation_params:  # another (newer) controller registered itself: keep it
             emulate.set_stored_effect(prev)
@@ -656,6 +778,8 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.heatmap_status())
                     if u.path == "/automation":
                         return self._send(200, ctl.automation.cfg)
+                    if u.path == "/openrgb":
+                        return self._send(200, ctl.openrgb_status())
                     if u.path == "/firmware":
                         return self._send(200, emulate.firmware_status())
                     if u.path == "/profiles":
@@ -776,6 +900,8 @@ def make_handler(ctl: Controller):
                         return self._send(200, {"apps": "stopped"})
                     if p == "/settings":
                         return self._send(200, ctl.update_settings(req))
+                    if p == "/openrgb":
+                        return self._send(200, ctl.configure_openrgb(req))
                     if p == "/games":
                         if not isinstance(req.get("auto"), bool):
                             raise ValueError("auto must be true or false")

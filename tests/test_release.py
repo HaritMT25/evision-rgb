@@ -100,7 +100,8 @@ class ReleaseNotes(unittest.TestCase):
         import release_notes
         from evision_rgb import __version__
         notes = release_notes.section(__version__)
-        self.assertIn("Album colours", notes)
+        top = read("CHANGELOG.md").split("\n## ", 2)[1]  # this version's section: its first entry is in the notes
+        self.assertIn(top.splitlines()[1].strip()[:60], notes)
         full = release_notes.notes(__version__)
         self.assertIn("More info", full, "how to get past the SmartScreen warning")
         self.assertIn(".sha256", full)

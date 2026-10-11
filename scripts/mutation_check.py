@@ -214,7 +214,7 @@ MUTANTS = {
         '        return bool(self._on_battery) and self.automation.cfg["battery"]["enabled"]',
         '        return self._on_battery is not False and self.automation.cfg["battery"]["enabled"]'),
     'battery: an effect you chose on battery is replaced when plugging in': ('evision_rgb/server.py',
-        'comes back over it."""\n        self.battery_paused = None', 'comes back over it."""'),
+        '        over it."""\n        self.battery_paused = None', '        over it."""'),
     'battery: start-up on battery starts the effect anyway': ('evision_rgb/server.py',
         '            if want and self._battery_saving():', '            if False:'),
     'battery: the indicator mirror is paused as if it were your effect': ('evision_rgb/server.py',
@@ -303,6 +303,29 @@ MUTANTS = {
         '    if m < LIFT_BELOW:', '    if False:'),
     'faint keys: unlit keys drawn as dim colours in the preview': ('evision_rgb/server.py',
         '    if float((led * 255 + 0.5).max()) < 1:\n        return "000000"', '    if False:\n        return "000000"'),
+    # -- OpenRGB SDK server
+    'openrgb: client colours get gamma-corrected (OpenRGB sends LED values)': ('evision_rgb/openrgb.py',
+        '    raw = True\n', '    raw = False\n'),
+    'openrgb: LEDs land on the wrong keys': ('evision_rgb/openrgb.py',
+        '        frame[start:start + len(arr)] = arr', '        frame[start:start + len(arr)] = arr[::-1]'),
+    'openrgb: your lighting does not come back when the client leaves': ('evision_rgb/server.py',
+        '            prev, self.ext_on, self.ext_prev = self.ext_prev, False, None\n            if mine:\n                eng.stop()\n                self._give_back(prev)', '            prev, self.ext_on, self.ext_prev = self.ext_prev, False, None\n            if mine:\n                eng.stop()'),
+    'openrgb: the client takes the lighting back after you chose other lighting': ('evision_rgb/server.py',
+        '        if self._ext_dismissed or (eng.effect is not None and eng.effect.name == "openrgb"):', '        if eng.effect is not None and eng.effect.name == "openrgb":'),
+    'openrgb: listens on every network interface': ('evision_rgb/openrgb.py',
+        '    def start(self, port: int = 6742, host: str = "127.0.0.1"):', '    def start(self, port: int = 6742, host: str = "0.0.0.0"):'),
+    'openrgb: a huge packet is waited for (memory, hang)': ('evision_rgb/openrgb.py',
+        '                if size > MAX_PACKET:\n                    return', '                if False:\n                    return'),
+    'openrgb: version-0 clients get the vendor field': ('evision_rgb/openrgb.py',
+        '(_text(state["vendor"]) if v >= 1 else b"")', '_text(state["vendor"])'),
+    'openrgb: old clients get brightness fields': ('evision_rgb/openrgb.py',
+        '    if v >= 3:\n        out += struct.pack("<II", m["brightness_min"], m["brightness_max"])', '    if True:\n        out += struct.pack("<II", m["brightness_min"], m["brightness_max"])'),
+    'openrgb: version-4 zones miss their segment count': ('evision_rgb/openrgb.py',
+        '    if v >= 4:\n        zone += struct.pack', '    if False:\n        zone += struct.pack'),
+    "openrgb: a client's built-in effect is not stored": ('evision_rgb/server.py',
+        '            self.set_hardware(**fields)\n            self._ext_dismissed = True', '            self._ext_dismissed = True'),
+    'openrgb: loading a profile does nothing': ('evision_rgb/server.py',
+        '        p = self.find_profile(name)\n        if p is not None:', '        p = self.find_profile(name)\n        if False:'),
     # -- releases
     'release: a failing self-test check still passes the build': ('evision_rgb/gui/app.py',
         '    ok = all(c["ok"] for c in checks.values())', '    ok = True'),
@@ -322,7 +345,7 @@ HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_b
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
          "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
          "release:": ["test_release"], "usb:": ["test_feature_reconnect"],
-         "faint keys:": ["test_behavior"]}
+         "faint keys:": ["test_behavior"], "openrgb:": ["test_feature_openrgb"]}
 
 
 def coarse_timers() -> bool:
