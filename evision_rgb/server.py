@@ -90,7 +90,7 @@ class Controller:
 
     def _emulation_params(self) -> dict:
         info = self.info(0)
-        p = {k: info[k] for k in ("brightness", "speed", "direction", "random", "color")}
+        p = {k: info[k] for k in ("brightness", "speed", "direction", "random", "color", "variant")}
         p["mode"] = info["mode_id"]
         p["dim"] = False
         if info["mode_id"] == MODES["custom"]:
@@ -157,7 +157,7 @@ class Controller:
         info = self.info()
         if info["mode_id"] == MODES["custom"]:
             return {"source": "custom", "mode": info["mode"], "colors": self.kb.get_custom(0)}
-        key = tuple(info[k] for k in ("mode_id", "brightness", "speed", "direction", "random", "color"))
+        key = tuple(info[k] for k in ("mode_id", "brightness", "speed", "direction", "random", "color", "variant"))
         if self._emu[0] != key:
             self._emu = (key, emulate.emulator(info), time.monotonic())
         _, emu, t0 = self._emu

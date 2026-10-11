@@ -78,15 +78,17 @@ class Keyboard:
         return {"profile": cfg[O_PROFILE], "mode": MODE_NAMES.get(cfg[O_MODE], hex(cfg[O_MODE])),
                 "mode_id": cfg[O_MODE], "brightness": cfg[O_BRIGHT], "speed": cfg[O_SPEED],
                 "direction": cfg[O_DIR], "random": cfg[O_RANDOM],
-                "color": "%02x%02x%02x" % tuple(cfg[O_RGB:O_RGB + 3]), "colorset": cfg[O_COLORSET]}
+                "color": "%02x%02x%02x" % tuple(cfg[O_RGB:O_RGB + 3]), "colorset": cfg[O_COLORSET],
+                "variant": cfg[O_COLORSET]}
 
     def set_effect(self, mode: str | int | None = None, brightness: int | None = None,
                    speed: int | None = None, color=None, direction: int | None = None,
-                   random: bool | None = None, colorset: int | None = None, _refresh_custom: bool = True) -> dict:
+                   random: bool | None = None, colorset: int | None = None, variant: int | None = None,
+                   _refresh_custom: bool = True) -> dict:
         """Persistent hardware effect (survives replug). Read-modify-write of the config block."""
-        self.apply_fields(bytearray(CONFIG_LEN), mode, brightness, speed, color, direction, random, colorset)
+        self.apply_fields(bytearray(CONFIG_LEN), mode, brightness, speed, color, direction, random, colorset, variant)
         cfg = bytearray(self.dev.read_config(CONFIG_LEN))
-        self.apply_fields(cfg, mode, brightness, speed, color, direction, random, colorset)
+        self.apply_fields(cfg, mode, brightness, speed, color, direction, random, colorset, variant)
         if cfg[O_MODE] == MODES["custom"]:
             cfg[O_COLORSET] = 0  # firmware shows area 0 regardless; keep the byte consistent with that
         frame = self.dev.read_custom(0) if cfg[O_MODE] == MODES["custom"] and _refresh_custom else None
@@ -117,7 +119,7 @@ class Keyboard:
 
     @staticmethod
     def apply_fields(cfg: bytearray, mode=None, brightness=None, speed=None, color=None,
-                     direction=None, random=None, colorset=None) -> bytearray:
+                     direction=None, random=None, colorset=None, variant=None) -> bytearray:
         """Validate and apply effect fields to a config block (no I/O; raises ValueError)."""
         if mode is not None:
             if isinstance(mode, str):
@@ -148,6 +150,10 @@ class Keyboard:
             if not 0 <= colorset < COLORSETS:
                 raise ValueError(f"colorset 0..{COLORSETS - 1}")
             cfg[O_COLORSET] = colorset
+        if variant is not None:  # byte 18 for built-in effects, e.g. Surmount: 0-2 presets, 3 = chosen colour
+            if not 0 <= int(variant) <= 3:
+                raise ValueError("variant 0..3")
+            cfg[O_COLORSET] = int(variant)
         cfg[O_PROFILE] = 0
         return cfg
 

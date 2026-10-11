@@ -15,7 +15,7 @@ Please open an issue describing what the real effect does if one looks wrong.
 | 06 | Normal | steady colour | exact |
 | 07 | Reaction | pressed keys flash and fade | approximation |
 | 08 | Ripples | ring from the pressed key | approximation |
-| 09 | Traverse | bar sweeping across | approximation |
+| 09 | Traverse | **reactive**: key press sends light both ways along its row | **observed** |
 | 0A | Stars | random twinkles | approximation |
 | 0B | Flowers | random multicolour blooms | approximation |
 | 0C | Roll | vertical rainbow scroll | approximation |
@@ -23,6 +23,9 @@ Please open an issue describing what the real effect does if one looks wrong.
 | 0E | Cartoon | cluster around H/J/K grows, fades, returns | **observed** |
 | 0F | Rain | drops falling down columns | approximation |
 | 10 | Scan | bar scanning back and forth | approximation |
-| 11 | Surmount | colour fill rising and falling | approximation |
+| 11 | Surmount | static; byte 18 = style: 0 light pink, 1-2 presets (shades unconfirmed), 3 = chosen colour | **observed** (partly) |
 | 12 | Speed | fast rainbow streaks | approximation |
 | 14 | Custom | stored per-key layout | exact |
+
+Note: the **Random / multi-colour** flag (config byte 5) overrides the chosen colour in effects such as Traverse.
+The app now turns it off when you pick a colour.

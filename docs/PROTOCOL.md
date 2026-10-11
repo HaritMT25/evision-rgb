@@ -40,7 +40,8 @@ status   = 0 in a good reply, 0xFF = unsupported command
 ## Config block (profile 0, read/write at offset 0) [verified]
 ```
 [0] current profile  [1] mode  [2] brightness 0..4  [3] speed 0..4 (0 = fastest)
-[4] direction (0 = left→right, 1 = right→left)  [5] random colour  [6..8] R,G,B  [18] custom colorset (ignored, see quirks)
+[4] direction (0 = left→right, 1 = right→left)  [5] random colour (overrides RGB)  [6..8] R,G,B
+[18] effect variant: Surmount style 0..3 (3 = use RGB); custom colorset (ignored, see quirks)
 ```
 The vendor app writes 0x1D bytes. Read-modify-write the block so unknown bytes survive.
 

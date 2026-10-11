@@ -19,7 +19,7 @@ from evision_rgb.protocol import MODES
 
 def emu(mode, **kw):
     from evision_rgb.emulate import emulator
-    cfg = {"mode": MODES[mode], "brightness": 4, "speed": 2, "direction": 0, "random": 0, "color": "ff0000"}
+    cfg = {"mode": MODES[mode], "brightness": 4, "speed": 2, "direction": 0, "random": 0, "color": "ff0000", "variant": 0}
     cfg.update(kw)
     return emulator(cfg)
 
@@ -96,6 +96,28 @@ class Emulation(unittest.TestCase):
         self.assertGreater(((centre[1:] > 0.4) & (centre[:-1] <= 0.4)).sum(), 1, "and comes back repeatedly")
         self.assertGreater(centre.mean(), edge.mean() * 2, "it is a cluster, not the whole board")
 
+    def test_traverse_is_dark_until_a_key_sends_light_along_its_row(self):
+        # observed: pressing a key sends light both ways along that key's row
+        e = emu("traverse", color="ff0000")
+        idle = np.asarray(e.render(0.0))
+        self.assertLess(idle.max(), 0.05, "dark while idle")
+        e.press("H")
+        time.sleep(0.15)
+        out = np.asarray(e.render(0.15))
+        self.assertGreater(out[INDEX["h"]].max() + out[INDEX["g"]].max() + out[INDEX["j"]].max(), 0.5)
+        time.sleep(0.35)
+        out2 = np.asarray(e.render(0.5))
+        self.assertGreater(out2[INDEX["a"]].max() + out2[INDEX["l"]].max(), 0.3, "travels both ways along the row")
+        self.assertLess(out2[INDEX["y"]].max() + out2[INDEX["n"]].max(), 0.1, "other rows stay dark")
+        self.assertGreater(out2[:, 0].max(), out2[:, 2].max(), "uses the chosen colour when random is off")
+
+    def test_surmount_is_static_and_variant_4_uses_the_chosen_colour(self):
+        f = frames(emu("surmount", color="00ffff", variant=3), secs=2)
+        self.assertTrue(np.allclose(f, f[0]), "static")
+        self.assertTrue(np.allclose(f[0][0], [0, 1, 1]))
+        pink = frames(emu("surmount", color="00ffff", variant=0), secs=0.2)[0][0]
+        self.assertGreater(pink[0], pink[1], "variant 1 is the light-pink preset")
+
     def test_custom_mode_shows_the_stored_layout(self):
         from evision_rgb.emulate import emulator
         e = emulator({"mode": MODES["custom"], "brightness": 4, "speed": 0, "direction": 0, "random": 0,
@@ -103,6 +125,20 @@ class Emulation(unittest.TestCase):
         c = np.asarray(e.render(0.0))
         self.assertTrue(np.allclose(c[INDEX["w"]], [0, 1, 0]))
         self.assertTrue(np.allclose(c[INDEX["q"]], [0, 0, 0]))
+
+
+class VariantField(unittest.TestCase):
+    def test_variant_is_written_to_byte_18_for_built_in_effects(self):
+        from fake_device import install
+        kb = install(self)
+        from evision_rgb.keyboard import Keyboard
+        with Keyboard() as k:
+            k.set_effect("surmount", variant=3)
+            self.assertEqual(kb.config[18], 3)
+            with self.assertRaises(ValueError):
+                k.set_effect("surmount", variant=4)
+            k.set_custom({"W": "ff0000"})
+            self.assertEqual(kb.config[18], 0, "custom mode still forces area 0")
 
 
 class AppUsesEmulation(unittest.TestCase):

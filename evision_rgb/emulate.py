@@ -27,7 +27,8 @@ class Emulated(Effect):
     fps = 30
 
     def __init__(self, mode: int = 6, brightness: int = 4, speed: int = 2, direction: int = 0, random: int = 0,
-                 color: str = "ffffff", custom: dict | None = None, seed: int = 7, dim: bool = True):
+                 color: str = "ffffff", custom: dict | None = None, seed: int = 7, dim: bool = True,
+                 variant: int = 0):
         self.mode = ID.get(int(mode), "normal")
         # dim=True: show the brightness setting (on-screen preview). Under overlays the keyboard applies
         # its own brightness, so the base is streamed at full level (dim=False).
@@ -36,6 +37,7 @@ class Emulated(Effect):
         self.x = (1 - X) if int(direction) == 1 else X
         self.random = bool(random)
         self.rgb = rgbf(color)
+        self.variant = int(variant)
         self.hue0 = self._hue(self.rgb)
         self.custom = np.zeros((N, 3))
         for k, c in (custom or {}).items():
@@ -45,7 +47,7 @@ class Emulated(Effect):
         self.pressed = np.full(N, -1e9)
         self.press_xy: list[tuple[float, float, float]] = []
         self.lock = threading.Lock()
-        self.events = KeyEvents(self.press) if self.mode in ("reaction", "ripples") else None
+        self.events = KeyEvents(self.press) if self.mode in ("reaction", "ripples", "traverse") else None
         self.sparks = np.zeros(N)
         self.below = [np.array([j for j in range(N) if abs(X[j] - X[i]) < 0.03 and 0 < Y[j] - Y[i] < 0.25], dtype=int)
                       for i in range(N)] if self.mode == "rain" else None
@@ -105,10 +107,23 @@ class Emulated(Effect):
         elif m == "cloud":
             n = (np.sin(x * 6 + t * 0.7 * r) + np.sin(YY * 14 - t * 0.5 * r) + np.sin((x + YY) * 4 + t * 0.3 * r)) / 3
             out = hsv(0.5 + n * 0.5 + t * 0.05 * r, 1.0, 0.6 + 0.4 * np.abs(n))
-        elif m in ("traverse", "scan"):
+        elif m == "traverse":  # observed: a key press sends light both ways along its row
+            now = time.monotonic()
+            with self.lock:
+                self.press_xy = [p for p in self.press_xy if now - p[0] < 2.0]
+                presses = list(self.press_xy)
+            out = np.zeros((N, 3))
+            for t0, px, py in presses:
+                age = now - t0
+                row = np.abs(YY - py) < 0.02
+                dx, front = np.abs(X - px), age * 0.9 * r
+                trail = np.where(dx <= front, np.exp(-(front - dx) / 0.15), 0.0)  # front with a fading trail
+                v = trail * row * max(0.0, 1 - age / 2.0)
+                col = hsv(X * 0.8 + age) if self.random else np.tile(self.rgb, (N, 1))
+                out = np.maximum(out, v[:, None] * col)
+        elif m == "scan":
             pos = (t * 0.5 * r) % 2
-            pos = pos if m == "traverse" or pos <= 1 else 2 - pos
-            pos = pos % 1 if m == "traverse" else pos
+            pos = pos if pos <= 1 else 2 - pos
             band = np.exp(-((x - pos) / 0.07) ** 2)
             out = band[:, None] * (hsv(np.full(N, t * 0.1)) if self.random else self.rgb)
         elif m == "cartoon":  # observed: a cluster around H/J/K grows, fades away, comes back (new colour)
@@ -137,12 +152,12 @@ class Emulated(Effect):
                 self._col = col
             self._col[births] = col[births]
             out = self._col * self.sparks[:, None]
-        elif m in ("reaction", "ripples", "surmount"):
+        elif m == "surmount":  # observed: static; byte 18 picks a preset (0 light pink, 1-2 shades) or 3 = chosen colour
+            presets = {0: np.array([1.0, 0.6, 0.75]), 1: (self.rgb + 1) / 2, 2: self.rgb * 0.55}
+            out = np.tile(presets.get(self.variant, self.rgb), (N, 1))
+        elif m in ("reaction", "ripples"):
             now = time.monotonic()
             base = np.zeros((N, 3))
-            if m == "surmount":  # colour fill rising and falling
-                lvl = 0.5 - 0.5 * math.cos(t * 0.8 * r)
-                base = (np.clip((lvl - (1 - Y)) * 6 + 1, 0, 1))[:, None] * self._colour(t, t * 0.13 * r)
             with self.lock:
                 flash = np.exp(-np.maximum(now - self.pressed, 0) * 2.5 * r)[:, None]
                 rings = [p for p in self.press_xy if now - p[0] < 1.5]
@@ -162,7 +177,7 @@ def emulator(cfg: dict, custom: dict | None = None) -> Emulated:
     """Build an emulator from Keyboard.info()-style fields."""
     return Emulated(mode=cfg.get("mode_id", cfg.get("mode", 6)), brightness=cfg.get("brightness", 4),
                     speed=cfg.get("speed", 2), direction=cfg.get("direction", 0), random=cfg.get("random", 0),
-                    color=cfg.get("color", "ffffff"), custom=custom)
+                    color=cfg.get("color", "ffffff"), custom=custom, variant=cfg.get("variant", 0))
 
 
 EFFECTS["emulate"] = Emulated

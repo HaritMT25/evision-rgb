@@ -224,6 +224,8 @@ async function loadInfo() {
   $("#hwSpeed").value = 4 - i.speed; $("#hwSpeedV").textContent = `${4 - i.speed}/4`;
   $$("#hwDir button").forEach(b => b.classList.toggle("on", +b.dataset.v === i.direction));
   $("#hwRandom").checked = !!i.random;
+  $("#hwVariantRow").style.display = i.mode_id === 17 ? "" : "none";
+  $$("#hwVariant button").forEach(b => b.classList.toggle("on", +b.dataset.v === i.variant));
   S.hwBrushColor = i.color; $("#hwChip").style.background = "#" + i.color; $("#hwHex").textContent = "#" + i.color;
   $("#hwPalette")._mark && $("#hwPalette")._mark();
   if (!S.dirty) { S.group = S.settings.custom_active || 0; markGroup(); }
@@ -236,6 +238,7 @@ const pushEffect = debounce(async () => {
     direction: +(($("#hwDir button.on") || {}).dataset?.v || 0),
   };
   if (body.mode === 20) body.colorset = 0;
+  if (body.mode === 17) body.variant = +(($("#hwVariant button.on") || {}).dataset?.v ?? 3);
   await safe(() => api("/effect", body));
   await loadInfo(); S.lastFrameAt = 0;
 }, 220);
@@ -247,8 +250,12 @@ function initLight() {
   $("#hwSpeed").oninput = () => { $("#hwSpeedV").textContent = `${$("#hwSpeed").value}/4`; pushEffect(); };
   $$("#hwDir button").forEach(b => b.onclick = () => { $$("#hwDir button").forEach(x => x.classList.remove("on")); b.classList.add("on"); pushEffect(); });
   $("#hwRandom").onchange = pushEffect;
+  $$("#hwVariant button").forEach(b => b.onclick = () => { $$("#hwVariant button").forEach(x => x.classList.remove("on")); b.classList.add("on"); pushEffect(); });
+  sel.addEventListener("change", () => ($("#hwVariantRow").style.display = +sel.value === 17 ? "" : "none"));
   buildPalette($("#hwPalette"), c => {
     S.hwBrushColor = c; $("#hwChip").style.background = "#" + c; $("#hwHex").textContent = "#" + c;
+    $("#hwRandom").checked = false;  // choosing a colour means "use this colour" (random overrides it)
+    if (+$("#hwMode").value === 17) { $$("#hwVariant button").forEach(x => x.classList.toggle("on", x.dataset.v === "3")); }
     $("#hwPalette")._mark(); pushEffect();
   }, () => S.hwBrushColor);
 }
