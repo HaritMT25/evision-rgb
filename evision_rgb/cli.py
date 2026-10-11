@@ -27,6 +27,13 @@ def _val(v: str):
     return {"true": True, "false": False}.get(v.lower(), v)
 
 
+def load_effects() -> dict:
+    """Every live effect the app knows: some modules add theirs to EFFECTS when they are imported."""
+    from . import emulate, games, heatmap, media  # noqa: F401  (emulate, keyboard, heatmap, nowplaying, cs2, dota2)
+    from .effects import EFFECTS
+    return EFFECTS
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         try:  # window titles / app names may not fit the console code page
@@ -106,7 +113,7 @@ def main(argv=None):
                 prof.stop()
                 eng.stop()
         elif a.cmd == "live":
-            from . import emulate, heatmap, media  # noqa: F401  (register 'emulate', 'heatmap', 'nowplaying')
+            load_effects()
             from .effects import Engine
             eng = Engine(kb)
             params = {k: _val(v) for k, v in (x.split("=", 1) for x in a.params)}

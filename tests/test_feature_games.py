@@ -440,6 +440,18 @@ class GamesInTheApp(unittest.TestCase):
         self.assertEqual(self.effect(), "cs2")
 
 
+class CommandLine(unittest.TestCase):
+    def test_the_cli_knows_every_live_effect_the_app_knows(self):
+        import subprocess
+        import sys
+        run = lambda code: subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,  # noqa: E731
+                                          timeout=120).stdout.strip()
+        cli = run("from evision_rgb import cli; print(sorted(cli.load_effects()))")
+        app = run("import evision_rgb.server; from evision_rgb.effects import EFFECTS; print(sorted(EFFECTS))")
+        self.assertIn("cs2", app)
+        self.assertEqual(cli, app)
+
+
 class GamesUI(unittest.TestCase):
     def read(self, *p):
         with open(os.path.join(*p), encoding="utf-8") as f:

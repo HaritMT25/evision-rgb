@@ -2,7 +2,7 @@
 Restores every file afterwards. Run from the project root:
 
     python scripts/mutation_check.py [text ...]   (only the mutants whose name contains one of the texts)
-A mutant may end with options: {"only": "win32"} (a bug that only exists on that platform), {"tests": [modules]}
+A mutant may end with options: {"only": "win32" | "coarse-timers"} (a bug that only exists there), {"tests": [modules]}
 (the test modules likely to catch it run first; otherwise the ones that mention the mutated module do)."""
 import os, re, shutil, subprocess, sys
 
@@ -191,9 +191,9 @@ MUTANTS = {
         '                self.run("solid", color="000000")\n            self.wake()', '                self.run("solid", color="000000")'),
     'still frames: stop waits for the slow idle frame': ('evision_rgb/effects.py',
         '                self._stop.set()\n                self.wake()', '                self._stop.set()'),
-    'still frames: full-speed frames paced by Event.wait (30 fps on Windows)': ('evision_rgb/effects.py',
-        '                time.sleep(max(0.0, period - (time.monotonic() - now)))',
-        '                self._wake.wait(max(0.0, period - (time.monotonic() - now)))', {"only": "win32"}),
+    'still frames: full-speed frames paced by Event.wait (30 fps where its timeout is coarse, e.g. Windows)': (
+        'evision_rgb/effects.py', '                time.sleep(max(0.0, period - (time.monotonic() - now)))',
+        '                self._wake.wait(max(0.0, period - (time.monotonic() - now)))', {"only": "coarse-timers"}),
     'still frames: a notification does not wake a still effect': ('evision_rgb/automation.py',
         '"n": max(1, int(flashes)), "period": max(0.05, float(period))})\n        wake_engines()',
         '"n": max(1, int(flashes)), "period": max(0.05, float(period))})'),
@@ -306,6 +306,22 @@ HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_b
          "release:": ["test_release"]}
 
 
+def coarse_timers() -> bool:
+    """Does threading.Event.wait round its timeout up to the 15.6 ms Windows timer tick here? (On machines where
+    something keeps a 1 ms timer resolution, e.g. some CI runners, it doesn't, and that mutant is not a bug.)"""
+    import threading
+    import time
+    e, waits = threading.Event(), []
+    for _ in range(7):
+        t = time.perf_counter()
+        e.wait(0.0167)
+        waits.append(time.perf_counter() - t)
+    return sorted(waits)[3] > 0.025
+
+
+ONLY = {"win32": lambda: sys.platform == "win32", "coarse-timers": coarse_timers}
+
+
 def hint(name):
     return next((mods for prefix, mods in HINTS.items() if name.startswith(prefix)), [])
 
@@ -355,8 +371,8 @@ for name, (rel, old, new, *opt) in MUTANTS.items():
         continue
     opts = opt[0] if opt else {}
     only = opts.get("only")
-    if only and not sys.platform.startswith(only):
-        print(f"[n/a] {name}: {only} only"); continue
+    if only and not ONLY[only]():
+        print(f"[n/a] {name}: only where {only}", flush=True); continue
     path = os.path.join(ROOT, rel)
     src = open(path, encoding="utf-8").read()
     if old not in src:
