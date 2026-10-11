@@ -160,9 +160,17 @@ function showFrame(f) {
 }
 function startStream() {
   if (!window.EventSource) return previewLoop();
-  const es = new EventSource("/stream");
-  es.onmessage = e => { try { showFrame(JSON.parse(e.data)); } catch (err) { } };
-  es.onerror = () => { es.close(); setTimeout(startStream, 1500); };  // reconnect (app restarting, …)
+  S.es = null;
+  const open = () => {
+    if (S.es || document.hidden) return;  // window hidden in the tray: no 60 fps preview for nobody
+    const es = S.es = new EventSource("/stream");
+    es.onmessage = e => { try { showFrame(JSON.parse(e.data)); } catch (err) { } };
+    es.onerror = () => { es.close(); if (S.es === es) S.es = null; setTimeout(open, 1500); };  // reconnect (app restarting, …)
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { if (S.es) S.es.close(); S.es = null; } else open();
+  });
+  open();
   const local = () => { if (S.tab === "custom" && (S.dirty || Object.keys(S.custom).length)) colorKeys(S.custom); setTimeout(local, 200); };
   local();
 }

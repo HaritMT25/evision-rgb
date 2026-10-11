@@ -172,23 +172,57 @@ MUTANTS = {
         '            if host is not None and host.lower() not in ours:', '            if False:'),
 }
 
+def drop_bytecode(path):
+    """Delete cached bytecode of `path`: a same-length mutant restored within the same second would otherwise
+    keep running from __pycache__ in every later test run."""
+    cache = os.path.join(os.path.dirname(path), "__pycache__")
+    stem = os.path.splitext(os.path.basename(path))[0] + "."
+    for f in os.listdir(cache) if os.path.isdir(cache) else []:
+        if f.startswith(stem):
+            os.remove(os.path.join(cache, f))
+
+
+def suite():
+    """Run the behaviour suite without writing bytecode (mutated code must never be cached)."""
+    return subprocess.run([PY, "-B", "-m", "unittest"], cwd=os.path.join(ROOT, "tests"), capture_output=True,
+                          text=True, timeout=300, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+
+
+def failures(r):
+    return [l.split(" ")[1] for l in r.stderr.splitlines() if l.startswith(("FAIL:", "ERROR:"))]
+
+
+base = suite()  # a failing suite would make every mutant look caught
+if base.returncode != 0:
+    print("baseline suite FAILS, nothing to measure:", ", ".join(failures(base)[:5]) or base.stderr[-500:])
+    sys.exit(1)
+
 failed_to_catch = []
 for name, (rel, old, new) in MUTANTS.items():
     path = os.path.join(ROOT, rel)
     src = open(path, encoding="utf-8").read()
     if old not in src:
         print(f"[skip] {name}: pattern not found"); failed_to_catch.append(name); continue
+    newline = "\r\n" if b"\r\n" in open(path, "rb").read() else "\n"  # the mutant differs only by the mutation
     shutil.copy(path, path + ".bak")
     try:
-        open(path, "w", encoding="utf-8").write(src.replace(old, new, 1))
-        r = subprocess.run([PY, "-m", "unittest"], cwd=os.path.join(ROOT, "tests"),
-                           capture_output=True, text=True, timeout=300)
+        drop_bytecode(path)
+        with open(path, "w", encoding="utf-8", newline=newline) as f:
+            f.write(src.replace(old, new, 1))
+        r = suite()
         caught = r.returncode != 0
-        tests = [l.split(" ")[1] for l in r.stderr.splitlines() if l.startswith(("FAIL:", "ERROR:"))]
-        print(f"[{'caught' if caught else 'MISSED'}] {name}" + (f"  <- {', '.join(tests[:3])}" if caught else ""))
+        print(f"[{'caught' if caught else 'MISSED'}] {name}" + (f"  <- {', '.join(failures(r)[:3])}" if caught else ""),
+              flush=True)
         if not caught:
             failed_to_catch.append(name)
     finally:
         shutil.move(path + ".bak", path)
+        os.utime(path)  # newer than anything cached from the mutant
+        drop_bytecode(path)
+
+after = suite()  # every file restored: the suite must pass again
+if after.returncode != 0:
+    print("suite FAILS after restoring the files:", ", ".join(failures(after)[:5]))
+    failed_to_catch.append("(suite broken after restore)")
 print("all mutants caught" if not failed_to_catch else f"NOT caught: {failed_to_catch}")
 sys.exit(1 if failed_to_catch else 0)

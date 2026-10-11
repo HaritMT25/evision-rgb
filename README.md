@@ -1,8 +1,9 @@
 # evision-rgb
 
 Open-source lighting control for **EVision-based keyboards** (USB vendor `0x320F`), starting with the
-**AJAZZ AK820** wired RGB. No vendor software needed: per-key colours, the keyboard's built-in effects,
-live effects rendered by your PC (~80 fps), music sync, a desktop app, an HTTP API and an MCP server for AI agents.
+**AJAZZ AK820** wired RGB, and for **AJAZZ AKP macro pads**. No vendor software needed: per-key colours, the keyboard's
+built-in effects, layered live effects rendered by your PC (~60 fps), music sync, shareable profiles, macro-pad keys
+and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
 
 > Not affiliated with AJAZZ or EVision. Product names are used only to describe compatibility.
 
@@ -37,8 +38,10 @@ live effects rendered by your PC (~80 fps), music sync, a desktop app, an HTTP A
   the pad arrives.
 - **Desktop app**: AJAZZ-style UI with a live preview of the keyboard, tray icon, start with Windows, conflict detector.
 - **For agents and scripts**: a local HTTP JSON API and an **MCP server**, so Claude or another agent can drive the lights.
-- **Safe by design**: only commands confirmed from the vendor app are on an allow-list. Firmware-update,
-  keymap and macro writes are never sent. Everything you write is read back and verified.
+- **Safe by design**: only commands confirmed from the vendor app are on the keyboard's allow-list. Firmware-update,
+  keymap and macro writes are never sent, and everything written is read back and verified. Pads get only the
+  documented display and keep-alive commands; boot-logo and config writes are refused. The local API answers only
+  programs on this PC, so web pages cannot drive it.
 - The app backs up the keyboard's lighting the first time it connects, and can restore it any time.
 
 ## Install (from source, Windows)

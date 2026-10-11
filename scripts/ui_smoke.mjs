@@ -177,6 +177,14 @@ try {
   check("the AKP153 layout has 18 screen keys", await js(`return $$("#padView .pkey.lcd").length === 18 && $$("#padView .pknob").length === 0`));
   await shot("pad-akp153");
 
+  // ---- hidden window (tray): the 60 fps preview stream must pause, and resume when shown again
+  await js(`Object.defineProperty(document, "hidden", {value: true, configurable: true});
+            document.dispatchEvent(new Event("visibilitychange")); await T.wait(200);`);
+  check("the preview stream pauses while the window is hidden", await js(`return S.es === null`));
+  await js(`Object.defineProperty(document, "hidden", {value: false, configurable: true});
+            document.dispatchEvent(new Event("visibilitychange")); await T.wait(600);`);
+  check("and resumes when it is shown", await js(`return !!S.es && S.es.readyState !== 2`));
+
   // ---- other tabs still render
   for (const t of ["light", "live", "auto", "apps", "settings"]) await js(`showTab("${t}"); await T.wait(250);`);
   await js(`showTab("apps"); await T.wait(100); $("#appsAdd").click(); const tr = $("#appsRows tr:last-child"); const s = tr.querySelector("[data-k=effect]"); s.value = "layers"; s.dispatchEvent(new Event("change"));`);

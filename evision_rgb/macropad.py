@@ -272,7 +272,7 @@ class PadManager:
                     self.tick()
                 except Exception as e:  # noqa: BLE001 - never let the pad thread die
                     self.error = repr(e)
-                self._stop.wait(0.01)
+                self._stop.wait(0.01 if self.dock is not None else 0.25)  # no pad: only wake up to look for one
         self._thread = threading.Thread(target=loop, daemon=True, name="macropad")
         self._thread.start()
 
