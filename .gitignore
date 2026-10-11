@@ -1,0 +1,16 @@
+# --- never publish: vendor binaries, decompiled code, captures, personal device dumps ---
+work/
+analysis/
+tools/
+*.pcap
+*.pcapng
+PROGRESS_LOG.md
+
+# --- build / env ---
+.venv/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+*.spec

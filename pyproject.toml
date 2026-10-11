@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evision-rgb"
+version = "0.2.0"
+description = "Open-source RGB control for EVision-based keyboards (AJAZZ AK820 and other USB 320F devices): per-key lighting, live effects, music sync, desktop app, HTTP API and MCP server"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Harit Tarwani" }]
+keywords = ["rgb", "keyboard", "ajazz", "ak820", "evision", "hid", "openrgb", "mcp"]
+requires-python = ">=3.10"
+dependencies = ["hidapi", "numpy", "psutil"]
+
+[project.optional-dependencies]
+effects = ["pynput", "soundcard"]
+mcp = ["mcp"]
+gui = ["pywebview", "pystray", "pillow"]
+dev = ["pyinstaller"]
+
+[project.scripts]
+evrgb = "evision_rgb.cli:main"
+evision-rgb = "evision_rgb.gui.app:main"
+
+[tool.setuptools]
+packages = ["evision_rgb", "evision_rgb.gui"]
+
+[tool.setuptools.package-data]
+"evision_rgb.gui" = ["web/*", "web/assets/*", "icon.ico"]

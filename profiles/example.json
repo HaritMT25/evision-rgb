@@ -1,0 +1,13 @@
+{
+  "default": {"effect": "rainbow", "params": {"speed": 0.12, "brightness": 0.6}},
+  "rules": [
+    {"match": "code.exe",          "effect": "reactive", "params": {"base": "000818"}},
+    {"match": "windowsterminal",   "effect": "reactive", "params": {"base": "001000", "color": "40ff40"}},
+    {"match": "spotify",           "effect": "music"},
+    {"match": "youtube",           "effect": "music", "params": {"style": "pulse"}},
+    {"match": "taskmgr.exe",       "effect": "sysmon"},
+    {"match": "game",              "effect": "solid", "params": {"color": "080000",
+                                    "keys": {"W": "ff2000", "A": "ff2000", "S": "ff2000", "D": "ff2000",
+                                             "Space": "ff8000", "LShift": "ff8000"}}}
+  ]
+}

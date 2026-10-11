@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EVision RGB</title>
+<link rel="stylesheet" href="ui/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">EVISION <b>RGB</b></div>
+    <div class="hright">
+      <div class="status"><span id="conflictPill" class="pill" style="display:none"></span>
+        <span class="dot" id="statusDot"></span><span id="statusText">connecting…</span></div>
+      <div class="model"><div class="name">AK820</div><div class="sub">KEYBOARD · 320F:505B</div></div>
+    </div>
+  </header>
+
+  <aside>
+    <div class="profile-row">
+      <select id="profileSel" class="redselect" title="Saved lighting profiles"></select>
+      <button class="sqbtn" id="profileAdd" title="Save current lighting as a new profile">+</button>
+    </div>
+    <nav id="nav">
+      <button data-tab="light" class="active">
+        <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/><path d="M12 0v1M3 9H2M22 9h-1M5 3l.7.7M19 3l-.7.7"/></svg>Light Settings</button>
+      <button data-tab="custom">
+        <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Custom Keys</button>
+      <button data-tab="live">
+        <svg viewBox="0 0 24 24"><path d="M3 12h3l3-8 4 16 3-8h5"/></svg>Live Effects</button>
+      <button data-tab="apps">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/></svg>App Profiles</button>
+      <button data-tab="settings">
+        <svg viewBox="0 0 24 24"><path d="M6 3v18M18 3v18M12 3v18"/><circle cx="6" cy="8" r="2"/><circle cx="12" cy="15" r="2"/><circle cx="18" cy="10" r="2"/></svg>Other Settings</button>
+    </nav>
+    <div class="aside-foot">
+      <div class="profile-name"><div id="profileName">no profile</div>
+        <button class="sqbtn" id="profileMenu" title="Rename / update / delete profile">✎</button></div>
+      <div>Independent driver · no AJAZZ software needed</div>
+    </div>
+  </aside>
+
+  <main>
+    <section id="stage">
+      <div id="board"><div id="case"></div><div id="selbox"></div></div>
+      <div id="caption"></div>
+    </section>
+
+    <section id="panel">
+      <!-- hardware lighting -->
+      <div class="tab active" id="tab-light">
+        <div class="grid2">
+          <div>
+            <div class="field"><label>Lighting effect (saved on the keyboard)</label>
+              <select id="hwMode" class="redselect"></select></div>
+            <div class="field"><label>Brightness <span class="hint" id="hwBrightV"></span></label>
+              <input type="range" id="hwBright" min="0" max="4" step="1">
+              <div class="ticks"><span>Dim</span><span>Bright</span></div></div>
+            <div class="field"><label>Speed <span class="hint" id="hwSpeedV"></span></label>
+              <input type="range" id="hwSpeed" min="0" max="4" step="1">
+              <div class="ticks"><span>Slow</span><span>Fast</span></div></div>
+            <div class="field"><label>Direction</label>
+              <div class="seg" id="hwDir"><button data-v="0">Left → right</button><button data-v="1">Right → left</button></div></div>
+          </div>
+          <div>
+            <div class="field"><label>Colour</label>
+              <div class="palette" id="hwPalette"></div>
+              <div class="row" style="margin-top:6px">
+                <label class="toggle"><input type="checkbox" id="hwRandom"><span></span></label><span>Random / multi-colour</span>
+              </div>
+              <div class="cur">current <span class="chip" id="hwChip"></span><span id="hwHex"></span></div>
+            </div>
+            <p class="hint">Changes apply instantly and are stored in the keyboard, so they keep working without this app.
+              Starting a live effect temporarily overrides them.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- custom per-key -->
+      <div class="tab" id="tab-custom">
+        <div class="grid2">
+          <div>
+            <h2>Paint keys</h2>
+            <p class="hint" style="margin-top:-6px">Click keys or drag a box over the keyboard to select. Shift/Ctrl adds to the selection.
+              Edits preview live; <b>Save to keyboard</b> stores them permanently.</p>
+            <div class="row" style="margin-bottom:12px">
+              <button class="btn" id="cSelAll">Select all</button>
+              <button class="btn" id="cSelNone">Select none</button>
+              <button class="btn" id="cSelInv">Invert</button>
+            </div>
+            <div class="row" style="margin-bottom:12px">
+              <button class="btn primary" id="cPaint">Paint selected</button>
+              <button class="btn" id="cFill">All light</button>
+              <button class="btn" id="cOff">All off</button>
+            </div>
+            <div class="row">
+              <span class="hint">Presets:</span>
+              <button class="btn ghost" data-preset="wasd">WASD + arrows</button>
+              <button class="btn ghost" data-preset="gradient">Gradient</button>
+              <button class="btn ghost" data-preset="rainbow">Rainbow</button>
+              <button class="btn ghost" data-preset="rows">Rows</button>
+            </div>
+          </div>
+          <div>
+            <div class="field"><label>Colour</label><div class="palette" id="cPalette"></div>
+              <div class="cur">brush <span class="chip" id="cChip"></span><span id="cHex"></span></div></div>
+            <div class="field"><label>Layout group <span class="hint">(saved in this app; Save puts it on the keyboard)</span></label>
+              <div class="seg" id="cGroup"><button data-v="0">Group 1</button><button data-v="1">Group 2</button><button data-v="2">Group 3</button></div></div>
+            <div class="row">
+              <button class="btn" id="cLoad">Load from keyboard</button>
+              <button class="btn" id="cDiscard">Discard preview</button>
+              <button class="btn primary" id="cSave">Save to keyboard</button>
+              <span class="hint" id="cDirty"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- live effects -->
+      <div class="tab" id="tab-live">
+        <div class="row" style="justify-content:space-between;margin-bottom:12px">
+          <h2 style="margin:0">Live effects <span class="hint">rendered by this PC at up to 60 fps · not saved on the keyboard</span></h2>
+          <button class="btn primary" id="liveStop">Stop live (back to keyboard effect)</button>
+        </div>
+        <div class="cards" id="cards"></div>
+      </div>
+
+      <!-- app profiles -->
+      <div class="tab" id="tab-apps">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <div class="row"><label class="toggle"><input type="checkbox" id="appsOn"><span></span></label>
+            <h2 style="margin:0">Switch lighting automatically by the app in front</h2></div>
+          <div class="hint" id="appsNow"></div>
+        </div>
+        <table>
+          <thead><tr><th style="width:34%">When the app / window title contains</th><th style="width:22%">Effect</th><th>Options</th><th style="width:30px"></th></tr></thead>
+          <tbody id="appsRows"></tbody>
+          <tfoot><tr><td><b>Anything else</b></td><td><select id="appsDefault"></select></td><td colspan="2" class="hint">default</td></tr></tfoot>
+        </table>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" id="appsAdd">+ Add rule</button>
+          <button class="btn" id="appsPick">+ Add the next app I click (3 s)</button>
+          <button class="btn primary" id="appsSave">Save &amp; apply</button>
+        </div>
+      </div>
+
+      <!-- settings -->
+      <div class="tab" id="tab-settings">
+        <div id="conflictBox"></div>
+        <div class="grid2">
+          <div>
+            <h2>Startup</h2>
+            <div class="row" style="margin-bottom:14px"><label class="toggle"><input type="checkbox" id="sAuto"><span></span></label>Start with Windows (in the tray)</div>
+            <div class="row" style="margin-bottom:14px"><label class="toggle"><input type="checkbox" id="sTray"><span></span></label>Closing the window keeps effects running in the tray</div>
+            <div class="field"><label>When the app starts</label>
+              <div class="seg" id="sStartup"><button data-v="none">Do nothing</button><button data-v="restore">Resume last live effect</button><button data-v="apps">Run app profiles</button></div></div>
+            <h2 style="margin-top:18px">Maintenance</h2>
+            <div class="row"><button class="btn" id="sRestore">Restore lighting from before first use</button></div>
+          </div>
+          <div>
+            <h2>Device</h2>
+            <div class="kv" id="devInfo"></div>
+            <h2 style="margin-top:18px">For AI agents</h2>
+            <p class="hint">HTTP API on <code>http://127.0.0.1:8820</code> while this app runs. MCP server:
+              <code>python -m evision_rgb.mcp_server</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="toast"></div>
+<div id="modal"><div class="box"><h3 id="mTitle"></h3><div id="mBody"></div><div class="row" id="mBtns"></div></div></div>
+<script src="ui/app.js"></script>
+</body>
+</html>
