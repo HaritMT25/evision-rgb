@@ -31,8 +31,10 @@ class Emulated(Effect):
                  variant: int = 0):
         self.mode = ID.get(int(mode), "normal")
         # dim=True: show the brightness setting (on-screen preview). Under overlays the keyboard applies
-        # its own brightness, so the base is streamed at full level (dim=False).
+        # its own brightness, so the base is streamed at full level (dim=False), and as LED values: the stored
+        # colours are LED values (like the exact engine's output), not colours for the live-effect gamma.
         self.level = 0.2 + 0.8 * max(0, min(4, int(brightness))) / 4 if dim else 1.0
+        self.raw = not dim
         self.rate = RATE[max(0, min(4, int(speed)))]
         self.x = (1 - X) if int(direction) == 1 else X
         self.random = bool(random)

@@ -37,6 +37,11 @@ status   = 0 in a good reply, 0xFF = unsupported command
 | 0x1A | (vendor app polls every 5 s) | [verified] AK820 replies status 0xFF |
 | 0x04, 0x08, 0x09, 0x15, 0x17, 0x1C, 0xAA | **do not send** | capability/keymap/macro writes, firmware update paths |
 
+The driver also lets each command touch only the memory the vendor app uses (`RANGES` in `evision_rgb/protocol.py`):
+capabilities 0x22 bytes, config reads up to 0x80 and writes up to 0x1D, key map / direct frame 384 bytes, LED table
+0x80, and custom colours only inside the three 384-byte areas at offsets 0, 0x200 and 0x400. Past them is the
+keyboard's program memory (see FIRMWARE.md).
+
 ## Config block (profile 0, read/write at offset 0) [verified]
 ```
 [0] current profile  [1] mode  [2] brightness 0..4  [3] speed 0..4 (0 = fastest)

@@ -42,6 +42,7 @@ import mimetypes
 import secrets
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -79,6 +80,7 @@ _STREAMS = {"open": 0}
 _STREAMS_LOCK = threading.Lock()
 _UNSET = object()  # "not yet": the first battery tick also restores a dim left over from before a restart
 DIM_RETRY_S = 30.0  # a brightness write that failed is tried again after this long (not on every tick)
+HEATMAP_SAVE_S = 60.0  # typing heatmap counts are saved this often while they grow
 
 
 def _lighting_name(p: dict) -> str:
@@ -178,6 +180,8 @@ class Controller:
         self._auto_hz = automation_hz
         self.heatmap = heatmap_mod.KeyCounter(os.path.join(settings_mod.DIR, "heatmap.json"),
                                               enabled=self.settings.get("heatmap_enabled", False))
+        heatmap_mod.set_counter(self.heatmap)  # the 'heatmap' effect shows these counts
+        self._heatmap_saved = time.monotonic()
         self._hook = None
         self._hook_keys = hook_keys
         self._sync_key_hook()
@@ -187,7 +191,7 @@ class Controller:
         self._first_contact()
         # boot the firmware engine (JIT compile + extraction) without blocking start-up
         threading.Thread(target=emulate.firmware_base, daemon=True).start()
-        self._info_cache = (0.0, None)
+        self._forget_cached()  # (info() and stored_custom(): cached briefly)
         self._emu = (None, None, 0.0)  # (config key, emulator, t0) for the preview
         emulate.set_stored_effect(self._emulation_params)  # 'keyboard' layers show the stored effect
         self.active_profile = None  # name of the profile applied last, until the lighting is changed otherwise
@@ -273,6 +277,19 @@ class Controller:
             self._info_cache = (time.monotonic(), cached)
         return cached
 
+    def stored_custom(self, max_age: float = 1.0) -> dict:
+        """The custom colours the keyboard shows (area 0), cached like info(): the preview asks up to 60 times a
+        second, and reading them is 7 USB transactions."""
+        t, cached = self._custom_cache
+        if cached is None or time.monotonic() - t > max_age:
+            cached = self.kb.get_custom(0)
+            self._custom_cache = (time.monotonic(), cached)
+        return cached
+
+    def _forget_cached(self):
+        """Something was written: the next look asks the keyboard."""
+        self._info_cache = self._custom_cache = (0.0, None)
+
     def _emulation_params(self) -> dict:
         info = self.info(0)
         p = {k: info[k] for k in ("brightness", "speed", "direction", "random", "color", "variant")}
@@ -289,6 +306,7 @@ class Controller:
                 self._watch_keyboard()
                 self._battery_tick()
                 self._games_tick()
+                self._heatmap_tick()
                 need = self.automation.active()
                 with self.lock:
                     eng = self.engine
@@ -366,16 +384,17 @@ class Controller:
         """Store a brightness without losing what is drawn: a live effect is held while the keyboard stores it
         (like set_hardware) and goes on with the same settings afterwards."""
         eng = self.engine
-        keep = (eng.effect.name, dict(eng.params)) if eng.effect is not None else None
+        keep = (eng.effect.name, dict(eng.params), eng.under_keys) if eng.effect is not None else None
         if keep:
             eng.pause()
         try:
             self.kb.set_effect(brightness=level)
         finally:
-            self._info_cache = (0.0, None)
+            self._forget_cached()
             if keep:
                 params = self._emulation_params() if keep[0] == "emulate" and self.auto_base else keep[1]
                 eng.run(keep[0], **params)
+                eng.under_keys = keep[2]  # (still only the black base under live key colours)
 
     def _take_lighting(self) -> dict | None:
         """Stop what the PC draws now and return it (to bring back later); None if nothing of yours ran."""
@@ -386,7 +405,8 @@ class Controller:
             eng.stop()
             return p
         if eng.effect is not None and not (self.auto_base and eng.effect.name == "emulate"):
-            p = {"effect": eng.effect.name, "params": dict(eng.params), "overrides": dict(eng.overrides)}
+            p = {"effect": eng.effect.name, "params": dict(eng.params), "overrides": dict(eng.overrides),
+                 "under_keys": eng.under_keys}
             eng.stop()  # the remembered live effect (settings) stays, so a restart brings it back too
             return p
         return None
@@ -399,6 +419,7 @@ class Controller:
         else:
             self.engine.overrides.update(p["overrides"])
             self.engine.run(p["effect"], **p["params"])
+            self.engine.under_keys = bool(p.get("under_keys"))  # (still only the black base under live key colours)
         self.auto_base = False
 
     def _pause_for_battery(self):
@@ -662,6 +683,12 @@ class Controller:
                "automation": self.automation.cfg, "settings": self.settings, "events": self.events.recent()}
         return _scrub(doc, _home_pattern(os.path.expanduser("~")))
 
+    def _heatmap_tick(self):
+        """Counts are saved every HEATMAP_SAVE_S while they grow, so a crash or a shutdown keeps them."""
+        if self.heatmap.unsaved and time.monotonic() - self._heatmap_saved >= HEATMAP_SAVE_S:
+            self._heatmap_saved = time.monotonic()
+            self.heatmap.save()
+
     def _sync_key_hook(self):
         """Global key hook only while the heatmap is counting."""
         want = self.heatmap.enabled and self._hook_keys
@@ -686,6 +713,9 @@ class Controller:
         prev = emulate.set_stored_effect(None)
         if prev != self._emulation_params:  # another (newer) controller registered itself: keep it
             emulate.set_stored_effect(prev)
+        prev = heatmap_mod.set_counter(None)
+        if prev is not self.heatmap:
+            heatmap_mod.set_counter(prev)
         if self._emu[1] is not None:
             self._emu[1].stop()
         self._sync_key_hook_off()
@@ -746,9 +776,7 @@ class Controller:
             raise ValueError(f"unknown effect {effect!r}; choose from {list(EFFECTS)}")
         self._apps_off(persist=remember)
         self._lighting_chosen()
-        run_params = dict(params or {})
-        if effect == "heatmap" and "counts" not in run_params:
-            run_params["counts"] = self.heatmap.counts()
+        run_params = dict(params or {})  # (a heatmap without counts shows the app's own, as they grow)
         st = self.engine.run(effect, **run_params)
         self.active_profile = None
         if remember:  # previews (custom-key editing) are not remembered
@@ -857,7 +885,7 @@ class Controller:
         except Exception:  # noqa: BLE001 - unplugged: the window says so instead of failing
             return {"source": "disconnected", "colors": {}}
         if info["mode_id"] == MODES["custom"]:
-            return {"source": "custom", "mode": info["mode"], "colors": _preview_hexes(self.kb.get_custom(0))}
+            return {"source": "custom", "mode": info["mode"], "colors": _preview_hexes(self.stored_custom())}
         key = tuple(info[k] for k in ("mode_id", "brightness", "speed", "direction", "random", "color", "variant"))
         if self._emu[0] != key:
             old = self._emu[1]
@@ -1090,7 +1118,7 @@ def make_handler(ctl: Controller):
                     except FileNotFoundError as e:
                         return self._send(404, {"error": str(e)})
                 with ctl.lock:
-                    ctl._info_cache = (0.0, None)
+                    ctl._forget_cached()
                     if p == "/notify":
                         ctl.automation.notify(req.get("color", "ffffff"), req.get("keys"),
                                               req.get("flashes", 3), req.get("period", 0.35))
@@ -1220,17 +1248,37 @@ def make_handler(ctl: Controller):
     return H
 
 
-def build_server(ctl: Controller, port: int = DEFAULT_PORT) -> ThreadingHTTPServer:
-    ThreadingHTTPServer.daemon_threads = True
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(ctl))
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+    # Windows lets a second program listen on a port that has SO_REUSEADDR (a second app started at the same time
+    # answered every other request and drew on the keyboard too): there the port is taken exclusively. Elsewhere
+    # SO_REUSEADDR only allows a quick restart.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def listen(port: int = DEFAULT_PORT) -> ThreadingHTTPServer:
+    """Take the API's port, before anything touches the keyboard: OSError if another program (another EVision RGB)
+    has it. Requests wait until build_server() gives it the controller."""
+    return _Server(("127.0.0.1", port), BaseHTTPRequestHandler)
+
+
+def build_server(ctl: Controller, port: int = DEFAULT_PORT, httpd: ThreadingHTTPServer | None = None) -> ThreadingHTTPServer:
+    httpd = httpd or listen(port)
+    httpd.RequestHandlerClass = make_handler(ctl)
     ctl.port = httpd.server_address[1]  # game config files point the game here
     return httpd
 
 
 def serve(port: int = DEFAULT_PORT):
+    httpd = listen(port)
     ctl = Controller()
     ctl.start_pads()
-    httpd = build_server(ctl, port)
+    build_server(ctl, httpd=httpd)
     print(f"AK820 API on http://127.0.0.1:{port}  (Ctrl+C to stop)")
     try:
         httpd.serve_forever()

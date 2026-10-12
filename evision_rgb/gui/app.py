@@ -22,7 +22,7 @@ os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(settings_mod.DIR, "numba-c
 # ...stamped by the engine's own (bundled) source, not by the whole .exe: a new version doesn't compile it again
 os.environ.setdefault("NUMBA_CACHE_LOCATOR_CLASSES", "evision_rgb.jit_cache.BundledSourceLocator,UserProvidedCacheLocator,"
                       "InTreeCacheLocator,UserWideCacheLocator,IPythonCacheLocator,ZipCacheLocator")
-from ..server import DEFAULT_PORT, Controller, build_server
+from ..server import DEFAULT_PORT, Controller, build_server, listen
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ICON_ICO = os.path.join(HERE, "icon.ico")
@@ -56,6 +56,10 @@ def _window_size() -> tuple[int, int]:
         return int(max(1000, min(1280, w - 40))), int(max(660, min(860, h - 30)))
     except Exception:
         return 1200, 780
+
+
+class PortTaken(OSError):
+    """Another program has the API's port: another EVision RGB that is still starting, or something else."""
 
 
 def _running(port: int) -> bool:
@@ -97,9 +101,13 @@ class App:
 
     # ---------------------------------------------------------------- lifecycle
     def start_backend(self):
+        try:  # first: another app with the port (one still starting) is found before anything touches the keyboard
+            self.httpd = listen(self.port)
+        except OSError as e:
+            raise PortTaken(f"port {self.port} is in use ({e})") from e
         self.ctl = Controller()
         self.ctl.show_cb = self.show  # lets a second launch bring this window to front (POST /show)
-        self.httpd = build_server(self.ctl, self.port)
+        build_server(self.ctl, httpd=self.httpd)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.ctl.startup()
         self.ctl.start_pads()
@@ -115,18 +123,15 @@ class App:
 
     def on_closing(self):
         if self.quitting or not self.ctl.settings.get("close_to_tray", True):
-            self.quitting = True
-            return True
+            return True  # the window closes; run() then quits (the tray icon's thread would keep the app alive)
         threading.Thread(target=self.hide, daemon=True).start()
         return False  # cancel the close: keep running in the tray
 
     def quit(self):
         self.quitting = True
         try:
-            if self.ctl:
-                self.ctl.stop_apps()
-                self.ctl.pads.stop()     # blanks the pad's keys: they do nothing without the app
-                self.ctl.engine.close()  # ends live mode; keyboard falls back to its stored effect
+            if self.ctl:  # app profiles, the pads (their keys blanked), OpenRGB clients and live mode end (the
+                self.ctl.close()  # keyboard falls back to its stored effect); the typing heatmap is saved
             if self.httpd:
                 self.httpd.shutdown()
         except Exception:
@@ -351,6 +356,18 @@ def main(argv=None):
         return 0
     try:
         App(a.port, a.background).run()
+    except PortTaken:  # another app took the port as this one started (the check above missed it, e.g. at login)
+        for _ in range(20):
+            if _running(a.port):
+                if not a.background:
+                    try:
+                        _post(a.port, "/show")
+                    except Exception:
+                        _log("second instance:", traceback.format_exc())
+                return 0
+            time.sleep(0.5)
+        _log(f"port {a.port} is in use by another program: not started")
+        return 1
     except Exception:
         _log("fatal:", traceback.format_exc())
         raise

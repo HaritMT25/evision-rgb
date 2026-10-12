@@ -78,14 +78,16 @@ class Effect:
 
 
 class Solid(Effect):
-    """One colour everywhere; optional per-key colours: keys={"W": "ff0000"}."""
+    """One colour everywhere; optional per-key colours: keys={"W": "ff0000"}. raw=True: the colours are LED values,
+    sent as they are (the custom colours tab previews a layout as it will be stored)."""
     name = "solid"
     fps = 5
 
-    def __init__(self, color="ffffff", keys: dict | None = None):
+    def __init__(self, color="ffffff", keys: dict | None = None, raw: bool = False):
         self.base = np.tile(rgbf(color), (N, 1))
         for k, c in (keys or {}).items():
             self.base[INDEX[k.lower()]] = rgbf(c)
+        self.raw = bool(raw)
 
     def render(self, t):
         return self.base
@@ -659,7 +661,7 @@ class Engine:
         self.post = None  # optional fn(colors, monotonic_t) -> colors (automation overlays)
         self.idle_after, self.idle_period = self.IDLE_AFTER, self.IDLE_PERIOD
         self.idle = False
-        self._under_keys = False  # the running effect is only the black base under live key colours
+        self.under_keys = False  # the running effect is only the black base under live key colours
         _ENGINES.add(self)
 
     def wake(self):
@@ -737,7 +739,7 @@ class Engine:
                     self.overrides[i] = rgbf(c)
             if self.effect is None and self.overrides:
                 self.run_under_keys()
-            elif self._under_keys and not self.overrides:
+            elif self.under_keys and not self.overrides:
                 self.stop()
             self.wake()
         return self.status()
@@ -746,12 +748,12 @@ class Engine:
         """Black under the live key colours when nothing else runs: it ends with the last of them."""
         with self.lock:
             self.run("solid", color="000000")
-            self._under_keys = True
+            self.under_keys = True
 
     def clear_keys(self):
         with self.lock:
             self.overrides.clear()
-            if self._under_keys:  # the black base only held them: the keyboard shows its own effect again
+            if self.under_keys:  # the black base only held them: the keyboard shows its own effect again
                 self.stop()
             self.wake()
 
@@ -766,7 +768,7 @@ class Engine:
                 self.effect = None
                 self.last = None
                 self.idle = False
-            self._under_keys = False
+            self.under_keys = False
 
     def pause(self):
         """Freeze live output before a persistent write: the keyboard keeps showing the last live

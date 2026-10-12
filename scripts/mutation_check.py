@@ -371,10 +371,10 @@ MUTANTS = {
     'review: an unreadable settings file is not in the event log': ('evision_rgb/server.py',
         '        if settings_mod.problem:\n            self.events.add(settings_mod.problem)\n', ''),
     'review: clearing live keys leaves the keyboard black': ('evision_rgb/effects.py',
-        '            if self._under_keys:  # the black base only held them: the keyboard shows its own effect again\n'
+        '            if self.under_keys:  # the black base only held them: the keyboard shows its own effect again\n'
         '                self.stop()\n', ''),
     'review: taking the last live key away leaves the keyboard black': ('evision_rgb/effects.py',
-        '            elif self._under_keys and not self.overrides:\n                self.stop()\n', ''),
+        '            elif self.under_keys and not self.overrides:\n                self.stop()\n', ''),
     'review: after an indicator, clearing live keys leaves the keyboard black': ('evision_rgb/server.py',
         '                                eng.run_under_keys()', '                                eng.run("solid", color="000000")'),
     'review: evrgb live turns colours like 990000 into numbers': ('evision_rgb/cli.py',
@@ -387,6 +387,48 @@ MUTANTS = {
         '                return self.value\n', ''),
     'review: shift+alt hints never show': ('evision_rgb/shortcuts.py',
         '            if _same(written, c):', '            if written == c:'),
+    # -- found by a third review (2026-10-12)
+    'review 2: custom colours change shade when saved (previewed with the live gamma)': ('evision_rgb/effects.py',
+        '        self.raw = bool(raw)', '        self.raw = False'),
+    'review 2: the custom tab previews with the live gamma': ('evision_rgb/gui/web/app.js',
+        'keys: S.custom, raw: true }', 'keys: S.custom }'),
+    'review 2: quitting the app loses the typing heatmap': ('evision_rgb/gui/app.py',
+        '                self.ctl.close()  # keyboard falls back', '                self.ctl.engine.close()  # keyboard falls back'),
+    'review 2: closing the window with close-to-tray off does not quit': ('evision_rgb/gui/app.py',
+        '            return True  # the window closes; run() then quits',
+        '            self.quitting = True\n            return True  # the window closes; run() then quits'),
+    'review 2: heatmap counts are only saved at quit (lost in a crash)': ('evision_rgb/server.py',
+        '        if self.heatmap.unsaved and time.monotonic() - self._heatmap_saved >= HEATMAP_SAVE_S:', '        if False:'),
+    'review 2: a heatmap brought back at start is black': ('evision_rgb/heatmap.py',
+        '        self.counter = _SOURCE["counter"] if counts is None else None', '        self.counter = None'),
+    'review 2: the heatmap does not follow the typing': ('evision_rgb/heatmap.py',
+        '        if self.counter is not None and t - self._drawn >= self.REFRESH_S:',
+        '        if self.counter is not None and self._drawn < 0:'),
+    'review 2: indicators draw the stored colours darker (the approximation)': ('evision_rgb/emulate.py',
+        '        self.level = 0.2 + 0.8 * max(0, min(4, int(brightness))) / 4 if dim else 1.0\n        self.raw = not dim\n',
+        '        self.level = 0.2 + 0.8 * max(0, min(4, int(brightness))) / 4 if dim else 1.0\n'),
+    "review 2: the pad's brightness knob turns the live keys' black base into an effect": ('evision_rgb/server.py',
+        '                eng.under_keys = keep[2]  #', '                pass  #'),
+    "review 2: a battery round trip turns the live keys' black base into an effect": ('evision_rgb/server.py',
+        '            self.engine.under_keys = bool(p.get("under_keys"))  #', '            pass  #'),
+    'review 2: the preview reads the custom colours for every frame': ('evision_rgb/server.py',
+        '"colors": _preview_hexes(self.stored_custom())}', '"colors": _preview_hexes(self.kb.get_custom(0))}'),
+    'review 2: new custom colours show a second late in the preview': ('evision_rgb/server.py',
+        '                    ctl._forget_cached()', '                    ctl._info_cache = (0.0, None)'),
+    'review 2: a second app can listen on the same port (Windows)': ('evision_rgb/server.py',
+        '    allow_reuse_address = os.name != "nt"\n\n    def server_bind(self):\n        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):',
+        '    allow_reuse_address = True\n\n    def server_bind(self):\n        if False:', {"only": "win32"}),
+    'review 2: the app touches the keyboard before it has its port': ('evision_rgb/gui/app.py',
+        '        try:  # first: another app with the port (one still starting) is found before anything touches the keyboard\n'
+        '            self.httpd = listen(self.port)\n        except OSError as e:\n'
+        '            raise PortTaken(f"port {self.port} is in use ({e})") from e\n        self.ctl = Controller()\n',
+        '        self.ctl = Controller()\n'
+        '        try:  # first: another app with the port (one still starting) is found before anything touches the keyboard\n'
+        '            self.httpd = listen(self.port)\n        except OSError as e:\n'
+        '            raise PortTaken(f"port {self.port} is in use ({e})") from e\n'),
+    'review 2: a second launch does not bring the first window forward': ('evision_rgb/gui/app.py',
+        '            if _running(a.port):\n                if not a.background:',
+        '            if _running(a.port):\n                if False:'),
     # -- the firmware image from the AJAZZ updater
     'firmware lookup: the whole updater is parsed for one resource (~2 s, ~95 MB at every start)': (
         'evision_rgb/firmware.py', '    pe = pefile.PE(path, fast_load=True)', '    pe = pefile.PE(path, fast_load=False)',
@@ -555,7 +597,7 @@ HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_b
          "diagnostics:": ["test_feature_diagnostics"], "tray:": ["test_feature_tray"],
          "handoffs:": ["test_feature_handoffs"], "jit cache:": ["test_jit_cache"],
          "hardening:": ["test_feature_hardening"], "firmware lookup:": ["test_firmware_lookup"],
-         "review:": ["test_feature_review_fixes"],
+         "review:": ["test_feature_review_fixes"], "review 2:": ["test_feature_review2"],
          "album:": ["test_feature_nowplaying"], "pad: the play key": ["test_feature_nowplaying"], "pad": ["test_feature_macropad"],
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
          "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
@@ -628,7 +670,18 @@ def failures(r):
     return [l.split(" ")[1] for l in r.stderr.splitlines() if l.startswith(("FAIL:", "ERROR:"))]
 
 
-base = suite()  # a failing suite would make every mutant look caught
+def whole_suite(what):
+    """The unmutated suite, once more if it fails: a timing test can miss on a busy machine (a CI runner); a real
+    failure fails again. (A flake in a mutant run can only make a mutant look caught, never missed.)"""
+    r = suite()
+    if r.returncode != 0:
+        print(f"{what} suite failed once, running it again:", ", ".join(failures(r)[:5]), flush=True)
+        print("\n".join(l for l in r.stderr.splitlines() if "Error:" in l)[:1500], flush=True)
+        r = suite()
+    return r
+
+
+base = whole_suite("baseline")  # a failing suite would make every mutant look caught
 if base.returncode != 0:
     print("baseline suite FAILS, nothing to measure:", ", ".join(failures(base)[:5]) or base.stderr[-500:])
     sys.exit(1)
@@ -663,7 +716,7 @@ for name, (rel, old, new, *opt) in MUTANTS.items():
         os.utime(path)  # newer than anything cached from the mutant
         drop_bytecode(path)
 
-after = suite()  # every file restored: the suite must pass again
+after = whole_suite("restored")  # every file restored: the suite must pass again
 if after.returncode != 0:
     print("suite FAILS after restoring the files:", ", ".join(failures(after)[:5]))
     failed_to_catch.append("(suite broken after restore)")

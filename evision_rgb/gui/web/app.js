@@ -323,8 +323,8 @@ function initLight() {
 // ------------------------------------------------------------------ custom tab
 function markGroup() { $$("#cGroup button").forEach(b => b.classList.toggle("on", +b.dataset.v === S.group)); }
 function setDirty(d) { S.dirty = d; $("#cDirty").textContent = d ? "unsaved changes (previewing live)" : ""; }
-const pushPreview = debounce(() => {
-  api("/run", { effect: "solid", params: { color: "000000", keys: S.custom }, remember: false }).catch(e => toast(e.message, true));
+const pushPreview = debounce(() => {  // raw: shown as they will be stored (custom colours are the LED values)
+  api("/run", { effect: "solid", params: { color: "000000", keys: S.custom, raw: true }, remember: false }).catch(e => toast(e.message, true));
 }, 60);
 function setCustom(patch) {
   Object.assign(S.custom, patch); setDirty(true); colorKeys(S.custom); pushPreview();

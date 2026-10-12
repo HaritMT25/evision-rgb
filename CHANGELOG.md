@@ -48,6 +48,14 @@
   anyway shows in Recent events; clearing live key colours gives the keyboard back instead of leaving it black; the
   mic-mute indicator no longer opens the microphone again ~18 times a second; Shift+Alt shortcut hints show in VS Code
   and Windows Terminal; `evrgb live solid color=990000` works, and so do `evrgb apps` rules with any effect.
+- **Fixes from a third review**: custom colours no longer change shade when you save them (the keyboard previewed
+  them with the gamma live effects use); the desktop app saves the typing heatmap when it quits, and every minute
+  while it counts (it never did, so the counts were lost); a heatmap brought back at start or by an app rule shows
+  your counts and follows your typing (it was black); with *Close to tray* off, closing the window quits the app;
+  indicators, notifications and the *keyboard* layer keep the stored colours' shade; clearing live key colours gives
+  the keyboard back after the pad's brightness knob or the battery saver too; the preview of a custom layout no
+  longer reads it from the keyboard 60 times a second; a second copy of the app started at the same moment
+  (autostart and a click at login) brings the first one's window forward instead of running beside it.
 
 ## 0.6.0 (2026-10-11)
 - New live effects after FastLED's classic examples (MIT): **Fire** (a flame in every column, after Fire2012),
