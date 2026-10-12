@@ -49,16 +49,16 @@ class EventLog:
                 pass
         return ev
 
-    def error(self, where: str, exc: BaseException) -> None:
-        """Log an error from background work, each distinct one at most once a minute."""
-        key, now = (where, repr(exc)), self.clock()
+    def error(self, where: str, exc: BaseException) -> bool:
+        """Log an error from background work, each kind (place + exception type) at most once a minute, so an
+        error whose message changes every time still can't flood the log. True if it was logged."""
+        key, now = (where, type(exc).__name__), self.clock()
         with self.lock:
             if now - self._errors.get(key, -1e18) < ERROR_EVERY_S:
-                return
+                return False
             self._errors[key] = now
-            if len(self._errors) > 200:
-                self._errors = {k: t for k, t in self._errors.items() if now - t < ERROR_EVERY_S}
         self.add(f"error in {where}: {exc!r}")
+        return True
 
     def recent(self, n: int | None = None) -> list[dict]:
         """The newest n events (default: all kept, at most KEEP), newest last."""

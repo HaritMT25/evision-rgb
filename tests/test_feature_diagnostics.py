@@ -60,6 +60,15 @@ class Diagnostics(_ServerCase):
         self.assertNotIn(home, json.dumps(d))
         self.assertEqual(d["settings"]["backup_dir"], os.path.join("~", "somewhere", "backup"))
 
+    def test_the_home_folder_is_hidden_in_any_spelling(self):
+        home = os.path.expanduser("~")
+        path = os.path.join(home, "AppData", "x.log")
+        self.ctl.update_settings({"pads": {path.upper(): repr(OSError(path)), "fwd": path.replace(os.sep, "/")}})
+        self.ctl.events.add(f"error in automation: {OSError(path)!r}")
+        text = json.dumps(self.diag())
+        user = os.path.basename(home)
+        self.assertNotIn(user.lower(), text.lower(), "repr()'s doubled backslashes, a key, any case, forward slashes")
+
     def test_asking_never_writes_to_the_keyboard(self):
         with self.kb.lock:
             before = len([p for p in self.kb.writes if len(p) > 3 and p[3] in (0x01, 0x06, 0x0B)])

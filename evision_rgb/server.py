@@ -40,6 +40,7 @@ import json
 import mimetypes
 import secrets
 import os
+import re
 import sys
 import threading
 import time
@@ -73,22 +74,40 @@ BACKUP_FILES = ("config.bin", "custom0.bin", "custom1.bin", "custom2.bin", "keym
 MODE_NAME = {i: n for n, i in MODES.items()}
 _STREAMS = {"open": 0}
 _STREAMS_LOCK = threading.Lock()
-_UNSET = object()
+_UNSET = object()  # "not yet": the first battery tick also restores a dim left over from before a restart
+DIM_RETRY_S = 30.0  # a brightness write that failed is tried again after this long (not on every tick)
 
 
 def _lighting_name(p: dict) -> str:
     return "app profiles" if "apps" in p else p["effect"]
 
 
-def _scrub(v, home: str):
-    """A copy that is safe to paste publicly: anything called a token hidden, the home folder shown as ~."""
+# effect names as the app shows them (gui/web/app.js EFFECTS + effectLabel), for the tray tooltip
+EFFECT_NAMES = {"rainbow": "Rainbow wave", "reactive": "Reactive typing", "music": "Music visualiser",
+                "nowplaying": "Album colours", "ambient": "Screen ambient", "fire": "Fire", "ocean": "Ocean",
+                "twinkle": "Twinkle", "matrix": "Digital rain", "sysmon": "System monitor", "breathing": "Breathing",
+                "gradient": "Gradient", "solid": "Solid colour", "layers": "Layer stack", "heatmap": "Typing heatmap",
+                "keyboard": "Keyboard's own effect", "cs2": "CS2 game lighting", "dota2": "Dota 2 game lighting",
+                "openrgb": "OpenRGB program"}
+
+
+def _home_pattern(home: str):
+    """The home folder in any spelling: any letter case, / or \\ or the doubled \\\\ of a repr()."""
+    parts = [re.escape(p) for p in re.split(r"[\\/]+", home) if p]
+    return re.compile(r"[\\/]+".join(parts) + r"(?![\w.-])", re.I) if len(parts) > 1 else None
+
+
+def _scrub(v, home):
+    """A copy that is safe to paste publicly: anything called a token hidden, the home folder shown as ~.
+    home: the pattern from _home_pattern (None: nothing to hide)."""
     if isinstance(v, dict):
-        return {k: "(hidden)" if "token" in str(k).lower() and v[k] else _scrub(x, home) for k, x in v.items()}
+        return {_scrub(k, home): "(hidden)" if "token" in str(k).lower() and x else _scrub(x, home)
+                for k, x in v.items()}
     if isinstance(v, (list, tuple)):
         return [_scrub(x, home) for x in v]
-    if isinstance(v, str) and len(home) > 3:
-        return v.replace(home, "~").replace(home.replace("\\", "/"), "~")
-    return v  # "not yet": the first battery tick also restores a dim left over from before a restart
+    if isinstance(v, str) and home is not None:
+        return home.sub("~", v)
+    return v
 
 
 def open_streams() -> int:
@@ -168,6 +187,7 @@ class Controller:
         self._on_battery = None
         self.battery_paused = None  # what the battery saver stopped: {"effect", "params", "overrides"} | {"apps"}
         self._dim_for = _UNSET      # battery brightness the keyboard was last brought in line with
+        self._dim_retry = 0.0       # monotonic time before which a failed brightness write is not tried again
         self.game_on = None         # game whose lighting took over automatically ("cs2" / "dota2")
         self.game_prev = None       # what ran before it (comes back when the game ends)
         self._game_dismissed = None  # you chose other lighting during this game: don't take over again
@@ -191,6 +211,11 @@ class Controller:
             self._power_seen = None
         power = {True: "on battery", False: "plugged in"}.get(self._power_seen, "no battery")
         self.events.add(f"app started ({__version__}): keyboard {'connected' if self._kb_seen else 'not connected'}, {power}")
+
+    def _log_error(self, where: str, e: BaseException):
+        """Background errors go to the event log (and the console of `evrgb serve`), each kind once a minute."""
+        if self.events.error(where, e):
+            print(f"{where}:", repr(e))
 
     def _watch_keyboard(self):
         c = bool(self.kb.dev.connected)
@@ -266,7 +291,7 @@ class Controller:
                             eng.stop()
                         self.auto_base = False
             except Exception as e:  # keyboard unplugged etc.: keep trying
-                self.events.error("automation", e)
+                self._log_error("automation", e)
 
     # -- battery saver: on battery the PC stops drawing and the keyboard shows its own effect
     def _battery_saving(self) -> bool:
@@ -283,11 +308,13 @@ class Controller:
             if saving and not self._saving:
                 self._saving = True
                 self._pause_for_battery()
+                self._battery_dim(True)
             elif not saving and self._saving:
                 self._saving = False
                 self._battery_dim(False)  # the brightness first, so the effect resumes on it (no flash between)
                 self._resume_after_battery()
-            self._battery_dim(saving)
+            else:
+                self._battery_dim(saving)
 
     def _battery_dim(self, saving: bool):
         """Option battery.brightness: on battery the keyboard stores that dimmer brightness, plugged in the one from
@@ -300,19 +327,28 @@ class Controller:
         if want == self._dim_for or (want is None and rec is None):
             self._dim_for = want
             return
+        if time.monotonic() < self._dim_retry:  # the last write failed: not again on every tick
+            return
         try:
             cur = self.info(0)["brightness"]
-            back = rec["from"] if rec is not None and cur == rec["to"] else cur
-            target, new = (want, {"from": back, "to": want}) if want is not None and back > want else (back, None)
-            if target != cur:
-                self._store_brightness(target)
-                self.events.add(f"keyboard brightness {cur} -> {target} on battery" if new
-                                else f"keyboard brightness back to {target}")
         except Exception:  # noqa: BLE001 - keyboard unplugged: tried again on the next tick
             return
-        self._dim_for = want
-        if new != self.settings.get("battery_dimmed"):
+        back = rec["from"] if rec is not None and cur == rec["to"] else cur
+        target, new = (want, {"from": back, "to": want}) if want is not None and back > want else (back, None)
+        if new is not None and new != rec:  # remembered BEFORE the write, so a failed write can't lose `back`
             self.update_settings({"battery_dimmed": new})
+        if target != cur:
+            try:
+                self._store_brightness(target)
+            except Exception as e:  # noqa: BLE001 - e.g. a readback mismatch: tried again later
+                self._dim_retry = time.monotonic() + DIM_RETRY_S
+                self._log_error("battery dim", e)
+                return
+            self.events.add(f"keyboard brightness {cur} -> {target} on battery" if new
+                            else f"keyboard brightness back to {target}")
+        self._dim_for = want
+        if new is None and self.settings.get("battery_dimmed") is not None:
+            self.update_settings({"battery_dimmed": None})
 
     def _store_brightness(self, level: int):
         """Store a brightness without losing what is drawn: a live effect is held while the keyboard stores it
@@ -552,9 +588,27 @@ class Controller:
     def battery_status(self) -> dict:
         p = self.battery_paused
         return {"saver": self.automation.cfg["battery"]["enabled"], "on_battery": self._on_battery,
-                "paused": None if not p else "app profiles" if "apps" in p else p["effect"],
+                "paused": _lighting_name(p) if p else None,
                 "brightness": self.automation.cfg["battery"]["brightness"],
                 "dimmed": self.settings.get("battery_dimmed")}
+
+    def tray_summary(self) -> str:
+        """Tooltip of the tray icon: the lighting and anything unusual, within Windows' 127 characters."""
+        eff = self.engine.effect  # read once: the tray asks from its own thread, without the app lock
+        name = lambda e: EFFECT_NAMES.get(e, e)  # noqa: E731
+        if eff is None or (self.auto_base and eff.name == "emulate"):
+            lines = ["Keyboard's own effect"]
+        else:
+            lines = [name(eff.name) + (" (app profiles)" if self.apps else "")]
+        if not self.kb.dev.connected:
+            lines.append("keyboard disconnected")
+        p = self.battery_paused
+        if p:
+            lines.append(f"on battery: {name(_lighting_name(p))} paused")
+        dimmed = self.settings.get("battery_dimmed")
+        if isinstance(dimmed, dict) and "to" in dimmed:
+            lines.append(f"keyboard dimmed to {dimmed['to']}/4")
+        return "\n".join(["EVision RGB"] + lines)[:127]
 
     def diagnostics(self) -> dict:
         """What a bug report needs in one document, safe to paste publicly. Only reads the keyboard's state."""
@@ -570,7 +624,7 @@ class Controller:
                "keyboard": kb, "status": self.engine.status(), "battery": self.battery_status(),
                "game_on": self.game_on, "openrgb": self.openrgb_status(), "firmware": emulate.firmware_status(),
                "automation": self.automation.cfg, "settings": self.settings, "events": self.events.recent()}
-        return _scrub(doc, os.path.expanduser("~"))
+        return _scrub(doc, _home_pattern(os.path.expanduser("~")))
 
     def _sync_key_hook(self):
         """Global key hook only while the heatmap is counting."""
@@ -731,7 +785,7 @@ class Controller:
             elif want:
                 self.engine.run(want["effect"], **want["params"])
         except Exception as e:  # never block start-up on a bad saved setting
-            self.events.error("start-up", e)
+            self._log_error("start-up", e)
 
     # -- preview of what the keyboard shows
     def frame(self) -> dict:
@@ -854,6 +908,8 @@ def make_handler(ctl: Controller):
                     return
                 if u.path == "/stream":
                     return self._stream()
+                if u.path == "/events":  # (not under the app lock: the log has its own)
+                    return self._send(200, {"events": ctl.events.recent()})
                 if u.path == "/games":  # (not under the app lock: looks through the Steam folders)
                     return self._send(200, ctl.games_status())
                 if u.path == "/nowplaying":  # (not under the app lock: asking Windows can take a moment)
@@ -896,8 +952,6 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.openrgb_status())
                     if u.path == "/diagnostics":
                         return self._send(200, ctl.diagnostics())
-                    if u.path == "/events":
-                        return self._send(200, {"events": ctl.events.recent()})
                     if u.path == "/firmware":
                         return self._send(200, emulate.firmware_status())
                     if u.path == "/profiles":

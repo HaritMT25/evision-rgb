@@ -182,9 +182,15 @@ class App:
                         return
             threading.Thread(target=promote, daemon=True).start()
 
-            def refresh_profiles():  # the Windows tray menu is built once: rebuild it when profiles change
+            def refresh():  # the Windows tray menu is built once: rebuild it when profiles change; tooltip = state
                 shown = profile_names()
                 while not self.quitting:
+                    try:
+                        tip = self.ctl.tray_summary()
+                        if tip != icon.title:
+                            icon.title = tip
+                    except Exception:
+                        _log("tray tooltip:", traceback.format_exc())
                     time.sleep(3)
                     names = profile_names()
                     if names != shown:
@@ -193,7 +199,7 @@ class App:
                             icon.update_menu()
                         except Exception:
                             _log("tray menu:", traceback.format_exc())
-            threading.Thread(target=refresh_profiles, daemon=True).start()
+            threading.Thread(target=refresh, daemon=True).start()
             # first run: tell the user where the icon is (Windows 11 hides new tray icons under the ^ arrow)
             if not self.ctl.settings.get("tray_hint_shown"):
                 try:

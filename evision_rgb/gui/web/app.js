@@ -748,8 +748,9 @@ function renderBattery() {
     : !b.on_battery ? "Plugged in. On battery the keyboard shows its own effect, which costs the PC nothing."
     : b.paused ? `On battery: ${effectLabel(b.paused)} is paused and comes back when you plug in.`
     : b.saver ? "On battery. Anything you start now keeps running." : "On battery (battery saver is off).";
-  if (b.dimmed) el.textContent += ` The keyboard is at brightness ${b.dimmed.to} of 4 until you plug in (then back to ${b.dimmed.from}).`;
-  else if (b.brightness != null && !b.on_battery) el.textContent += ` On battery it dims to ${b.brightness} of 4 (its lights run on the laptop's USB power).`;
+  if (b.dimmed) el.textContent += b.on_battery ? ` The keyboard is at brightness ${b.dimmed.to} of 4 until you plug in (then back to ${b.dimmed.from}).`
+    : ` The keyboard's brightness goes back to ${b.dimmed.from} of 4 as soon as it can.`;
+  else if (b.brightness != null && b.saver && b.on_battery === false) el.textContent += ` On battery it dims to ${b.brightness} of 4 (its lights run on the laptop's USB power).`;
 }
 function renderTimer() {
   const t = S.status && S.status.timer;

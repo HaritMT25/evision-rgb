@@ -80,6 +80,11 @@ class EventLogFile(unittest.TestCase):
         self.log.error("automation", OSError("read error"))
         self.assertEqual(len(self.lines()), 3, "and the first one again after a minute")
 
+    def test_an_error_whose_message_changes_still_logs_once_a_minute(self):
+        for i in range(50):
+            self.log.error("automation", OSError(f"config readback mismatch: read {i:02x}"))
+        self.assertEqual(len(self.lines()), 1)
+
     def test_a_file_that_cannot_be_written_never_breaks_anything(self):
         os.makedirs(os.path.join(self.dir, "blocked"))
         log = self.EventLog(os.path.join(self.dir, "blocked"), clock=self.clock)  # a directory, not a file

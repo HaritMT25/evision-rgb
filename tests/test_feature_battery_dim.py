@@ -187,6 +187,38 @@ class DimOnBattery(_ServerCase):
         self.kb.replug()
         self.assertTrue(wait_for(lambda: brightness(self.kb) == 1, secs=4))
 
+    def test_a_write_that_fails_after_storing_still_brings_the_brightness_back(self):
+        from evision_rgb import server
+        self.addCleanup(setattr, server, "DIM_RETRY_S", server.DIM_RETRY_S)
+        server.DIM_RETRY_S = 0.2
+        real = self.ctl._store_brightness
+
+        def glitch(level):  # the brightness reaches the keyboard, then the readback fails (cable glitch)
+            real(level)
+            raise OSError("readback failed")
+        self.ctl._store_brightness = glitch
+        self.dim(1)
+        self.battery = True
+        self.assertTrue(wait_for(lambda: brightness(self.kb) == 1))
+        self.ctl._store_brightness = real
+        time.sleep(0.4)
+        self.battery = False
+        self.assertTrue(wait_for(lambda: brightness(self.kb) == ORIGINAL), "the brightness from before is not lost")
+
+    def test_a_failing_write_is_not_retried_on_every_tick_and_is_logged(self):
+        calls = []
+
+        def broken(level):
+            calls.append(level)
+            raise OSError("write rejected")
+        self.ctl._store_brightness = broken
+        self.dim(1)
+        self.battery = True
+        time.sleep(0.6)  # 12 automation ticks
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(any("battery dim" in e["text"] and "write rejected" in e["text"]
+                            for e in self.ctl.events.recent()))
+
 
 class DimRememberedAcrossRestarts(_ServerCase):
     def setUp(self):
