@@ -16,7 +16,9 @@ Thanks for helping. A few things keep this project safe for everyone's keyboard.
 2. Implement until they pass. Everything runs against simulators: `tests/fake_device.py` (keyboard firmware
    behaviour, quirks included) and `tests/fake_pad.py` (macro pads). No hardware is needed.
 3. Add the bugs you just made impossible to `scripts/mutation_check.py`. It re-introduces each one and the suite must
-   fail every time; that proves the tests can catch the bug.
+   fail every time; that proves the tests can catch the bug. Each mutant names a piece of code by its exact text, so
+   when you change code a mutant points at, update the mutant too; `tests/test_mutation_list.py` lists any whose
+   text is gone.
 
 ```powershell
 python -m venv .venv; .venv\Scripts\activate
