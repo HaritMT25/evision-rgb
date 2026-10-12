@@ -18,7 +18,9 @@ import unittest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 MISSING_BUILD = r"Z:\no-such-build-machine\evision_rgb\fakeeng.py"  # built on GitHub: not on this PC
-ENGINE = "from numba import njit\n\n\n@njit(cache=True)\ndef add1(x):\n    return x + 1\n"
+# numba itself recompiles when a function's own bytecode changes; the stamp is what catches a change OUTSIDE it (a
+# module constant, an inlined helper: the firmware engine has many), so the engine's step lives in a constant
+ENGINE = "from numba import njit\n\nSTEP = 1\n\n\n@njit(cache=True)\ndef add1(x):\n    return x + STEP\n"
 
 RUNNER = r'''
 import os, sys, types
@@ -99,23 +101,32 @@ class PackagedApp(unittest.TestCase):
 
     def test_a_changed_engine_is_compiled_again(self):
         self.assertEqual(self.run_app()[0], 0)
-        self.write_engine(ENGINE.replace("x + 1", "(x + 2) - 1"))
+        self.write_engine(ENGINE.replace("STEP = 1", "STEP = 2"))  # outside the function: same bytecode
         code, out = self.run_app("EVision RGB 0.8.0.exe")
         self.assertEqual(code, 0, out)
-        self.assertIn("result 2 hits 0 misses 1", out)
+        self.assertIn("result 3 hits 0 misses 1", out, "not the old compiled code")
 
 
 class LeavesNumbaAlone(unittest.TestCase):
     def test_outside_the_packaged_app_and_for_other_packages_it_steps_aside(self):
+        from numba.core import config
         from evision_rgb.jit_cache import BundledSourceLocator
+        meipass = tempfile.mkdtemp()  # a bundle that has this file, and a cache folder: only the asked rule decides
+        os.makedirs(os.path.join(meipass, "evision_rgb"))
+        open(os.path.join(meipass, "evision_rgb", os.path.basename(__file__)), "w").close()
+        saved = {n: getattr(sys, n) for n in ("frozen", "_MEIPASS") if hasattr(sys, n)}
+        self.addCleanup(setattr, config, "CACHE_DIR", config.CACHE_DIR)
+        config.CACHE_DIR = tempfile.mkdtemp()
 
         def f():
             pass
-        self.assertIsNone(BundledSourceLocator.from_function(f, __file__), "not frozen: numba's own locators")
-        f.__module__ = "numpy.something"
-        saved = {n: getattr(sys, n) for n in ("frozen", "_MEIPASS") if hasattr(sys, n)}
+        f.__module__ = "evision_rgb.engine"
         try:
-            sys.frozen, sys._MEIPASS = True, tempfile.mkdtemp()
+            sys._MEIPASS = meipass
+            self.assertIsNone(BundledSourceLocator.from_function(f, __file__), "not frozen: numba's own locators")
+            sys.frozen = True
+            self.assertIsNotNone(BundledSourceLocator.from_function(f, __file__), "this package, packaged: ours")
+            f.__module__ = "numpy.something"
             self.assertIsNone(BundledSourceLocator.from_function(f, __file__), "another package's function")
         finally:
             for n in ("frozen", "_MEIPASS"):

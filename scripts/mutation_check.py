@@ -310,6 +310,16 @@ MUTANTS = {
         '                        ctl.remember_live(None)  # off means', '                        pass  # off means'),
     'handoffs: putting back no game feed leaves None for every later controller': ('evision_rgb/games.py',
         '        if f is not None:\n            _FEEDS[game] = f', '        if True:\n            _FEEDS[game] = f'),
+    # -- packaged app: numba cache of the firmware engine
+    'jit cache: stamped by the .exe, so every version compiles it again': ('evision_rgb/jit_cache.py',
+        '        st = os.stat(self._py_file)\n        return _content_hash(self._py_file, st.st_mtime, st.st_size)',
+        '        st = os.stat(sys.executable)\n        return _content_hash(sys.executable, st.st_mtime, st.st_size)'),
+    'jit cache: a changed engine runs the old compiled code': ('evision_rgb/jit_cache.py',
+        '        return _content_hash(self._py_file, st.st_mtime, st.st_size)', '        return b"always the same"'),
+    'jit cache: numba is taken over outside the packaged app too': ('evision_rgb/jit_cache.py',
+        '        if not getattr(sys, "frozen", False) or not config.CACHE_DIR:', '        if not config.CACHE_DIR:'),
+    'jit cache: other packages\' functions are taken over too': ('evision_rgb/jit_cache.py',
+        '        if not str(getattr(py_func, "__module__", "")).startswith("evision_rgb."):', '        if False:'),
     # -- now playing / album colours
     'album: the cover is read on every poll (slow)': ('evision_rgb/media.py',
         '        if track != self._track:\n            self._track = track', '        if True:\n            self._track = track'),
@@ -438,7 +448,7 @@ MUTANTS = {
 HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_battery"], "battery:": ["test_feature_battery"],
          "battery dim:": ["test_feature_battery_dim"], "events:": ["test_feature_events"],
          "diagnostics:": ["test_feature_diagnostics"], "tray:": ["test_feature_tray"],
-         "handoffs:": ["test_feature_handoffs"],
+         "handoffs:": ["test_feature_handoffs"], "jit cache:": ["test_jit_cache"],
          "album:": ["test_feature_nowplaying"], "pad: the play key": ["test_feature_nowplaying"], "pad": ["test_feature_macropad"],
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
          "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
@@ -480,9 +490,13 @@ def drop_bytecode(path):
 TESTS = os.path.join(ROOT, "tests")
 
 
+META = {"test_mutation_list"}  # checks this file's MUTANTS against the code: ANY applied mutant breaks it, so it
+#                                would "catch" every mutant. It runs in the baseline and restored suites only.
+
+
 def ordered_modules(rel, first=()):
-    """Every test module, the likeliest to catch a mutant of `rel` first: `first`, then those mentioning it."""
-    mods = sorted(f[:-3] for f in os.listdir(TESTS) if f.startswith("test_") and f.endswith(".py"))
+    """Every behaviour test module, the likeliest to catch a mutant of `rel` first: `first`, then those mentioning it."""
+    mods = sorted(f[:-3] for f in os.listdir(TESTS) if f.startswith("test_") and f.endswith(".py") and f[:-3] not in META)
     stem = os.path.splitext(os.path.basename(rel))[0]
     mentions = [m for m in mods if re.search(rf"\b{stem}\b", open(os.path.join(TESTS, m + ".py"), encoding="utf-8").read())]
     order = [m for m in first if m in mods] + mentions + mods
