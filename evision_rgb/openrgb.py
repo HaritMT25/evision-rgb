@@ -12,6 +12,7 @@ import socket
 import socketserver
 import struct
 import threading
+import time
 
 import numpy as np
 
@@ -21,6 +22,9 @@ from .protocol import MODES
 
 MAX_VERSION = 4
 MAX_PACKET = 1 << 20  # a whole-keyboard update is ~400 bytes: anything this large is not a lighting client
+# the keyboard keeps every effect change in its flash, and clients send one for every step of a slider: a change is
+# stored once changes rest this long (and this often while they keep coming)
+MODE_REST_S, MODE_EVERY_S = 0.3, 1.0
 COUNT, DATA, VERSION, CLIENT_NAME = 0, 1, 40, 50
 PROFILE_LIST, PROFILE_LOAD, PLUGIN_LIST = 150, 152, 200
 UPDATE_LEDS, UPDATE_ZONE, UPDATE_ONE, CUSTOM_MODE, UPDATE_MODE, SAVE_MODE = 1050, 1051, 1052, 1100, 1101, 1102
@@ -182,10 +186,58 @@ class Connection:
         self.sock, self.name, self.version = sock, "", 0
 
 
+class ModeChanges:
+    """Built-in effects clients ask for (UpdateMode / SaveMode), stored by one thread in the order asked: the
+    latest once changes rest MODE_REST_S, at least every MODE_EVERY_S while they keep coming."""
+
+    def __init__(self, store, on_error):
+        self.store, self.on_error = store, on_error  # store(conn, index, mode); on_error(exception)
+        self.cv = threading.Condition()
+        self.waiting = None  # (conn, index, mode) not stored yet
+        self.first = self.last = 0.0
+        self.thread = None
+
+    def put(self, *change):
+        with self.cv:
+            now = time.monotonic()
+            if self.waiting is None:
+                self.first = now
+            self.waiting, self.last = change, now
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._run, name="openrgb effects", daemon=True)
+                self.thread.start()
+            self.cv.notify()
+
+    def drop(self):
+        """Forget a change not stored yet (the client switched to Direct, or the server stops)."""
+        with self.cv:
+            self.waiting = None
+            self.cv.notify()
+
+    def _run(self):
+        while True:
+            with self.cv:
+                while True:
+                    if self.waiting is None:
+                        self.thread = None  # the next change starts another
+                        return
+                    left = min(self.last + MODE_REST_S, self.first + MODE_EVERY_S) - time.monotonic()
+                    if left <= 0:
+                        break
+                    self.cv.wait(left)
+                change, self.waiting = self.waiting, None
+            try:
+                self.store(*change)
+            except (struct.error, ValueError, KeyError, TypeError):
+                pass  # a malformed mode changes nothing
+            except Exception as e:  # noqa: BLE001 - e.g. the keyboard unplugged: the next change tries again
+                self.on_error(e)
+
+
 class OpenRGBServer:
     """TCP server for OpenRGB clients. Everything that touches the lighting goes through `app`:
     app.orgb_state(), orgb_colors(conn, colors, start), orgb_direct(conn), orgb_mode(conn, index, mode),
-    orgb_profiles(), orgb_load_profile(name), orgb_left(conn)."""
+    orgb_profiles(), orgb_load_profile(name), orgb_left(conn), orgb_error(exception)."""
 
     def __init__(self, app):
         self.app = app
@@ -194,6 +246,7 @@ class OpenRGBServer:
         self.connections: dict[int, Connection] = {}
         self.lock = threading.Lock()
         self.error = None
+        self.modes = ModeChanges(app.orgb_mode, app.orgb_error)
 
     @property
     def address(self):
@@ -227,6 +280,7 @@ class OpenRGBServer:
         if srv is not None:
             srv.shutdown()
             srv.server_close()
+        self.modes.drop()
         with self.lock:
             conns = list(self.connections.values())
         for c in conns:
@@ -314,10 +368,16 @@ class OpenRGBServer:
             if 0 <= index < N:
                 self.app.orgb_colors(conn, _rgb(data, 4, 1), index)
         elif pid == CUSTOM_MODE:
+            self.modes.drop()
             self.app.orgb_direct(conn)
         elif pid in (UPDATE_MODE, SAVE_MODE):
             (index,) = struct.unpack_from("<i", data, 4)
-            self.app.orgb_mode(conn, index, parse_mode(data, 8, conn.version))
+            mode = parse_mode(data, 8, conn.version)
+            if index == 0 or mode.get("name") == "Direct":  # (nothing to store: at once)
+                self.modes.drop()
+                self.app.orgb_direct(conn)
+            else:
+                self.modes.put(conn, index, mode)
         return None
 
 

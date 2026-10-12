@@ -14,6 +14,7 @@ CONFLICTS = {
     "signalrgb": "SignalRGB",
     "audiorecord": "AJAZZ AudioRecord helper",
 }
+CLOSABLE = ("ajazz", "audiorecord", "openrgb", "signalrgb")  # (NexusService is a Windows service: stopped there)
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "EVisionRGB"
@@ -27,15 +28,15 @@ def conflicts() -> list[dict]:
         for k, why in CONFLICTS.items():
             if k in n:
                 out.append({"pid": p.info["pid"], "name": p.info["name"], "why": why,
-                            "closable": k in ("ajazz", "audiorecord", "openrgb", "signalrgb")})
+                            "closable": k in CLOSABLE})
     return out
 
 
 def close_process(pid: int) -> bool:
-    """Close a conflicting program (only names from CONFLICTS; never elevated services)."""
+    """Close a conflicting program the window offers to close (names from CLOSABLE; never services)."""
     p = psutil.Process(pid)
-    if not any(k in p.name().lower() for k in CONFLICTS):
-        raise ValueError("not a known conflicting program")
+    if not any(k in p.name().lower() for k in CLOSABLE):
+        raise ValueError("not a conflicting program this app can close")
     try:
         p.terminate()
     except psutil.AccessDenied:

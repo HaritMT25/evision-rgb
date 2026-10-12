@@ -20,6 +20,8 @@ running, it already uses that port: close it or pick another port.
 - **Direct** mode: the client's colours become the live lighting. Caps Lock and the other indicators stay on top, and
   colours reach the LEDs as sent (no gamma), like OpenRGB does.
 - The other modes are the keyboard's **built-in effects**. Choosing one stores it on the keyboard, like Light Settings.
+  The keyboard keeps every change in its flash memory, so when a client changes an effect step by step (a slider),
+  the app stores it once the changes rest for 0.3 s, and about once a second while they go on.
 - The profiles saved in this app are listed and can be loaded.
 
 ## Who wins

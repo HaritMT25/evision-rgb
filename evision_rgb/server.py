@@ -31,7 +31,8 @@ GET  /events                                  recent events, newest last (keyboa
 GET  /pad | /pad/key.png?model=akp03&i=0      macro pad state, configs, supported models / a key image
 POST /pad {"model": "akp03", "brightness": 80, "keys": [...], "knobs": [...]}   POST /pad/key {"model", "index", "key"}
 POST /pad/press {"model": "akp03", "key": 0} | {"knob": 1, "move": "left|right|press"}   run what it is set to
-Only local programs and the app's own page are served: other Host names / Origins and non-JSON POSTs are refused.
+Only local programs and the app's own page are served: other Host names / Origins and non-JSON POSTs are refused
+(before their body is read; no body over 1 MiB is read).
 """
 from __future__ import annotations
 
@@ -66,6 +67,8 @@ from .layout import KEYS
 from .protocol import CMD_WRITE_CONFIG, MODES
 
 DEFAULT_PORT = 8820
+MAX_BODY = 1 << 20  # largest request body read (a profile, the biggest real request, is at most 256 KB)
+DRAIN = 64 * 1024   # of a refused request's body at most this much is read (and dropped)
 WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui", "web")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUP_FILES = ("config.bin", "custom0.bin", "custom1.bin", "custom2.bin", "keymap.bin")
@@ -514,6 +517,9 @@ class Controller:
             self.set_hardware(**fields)
             self._ext_dismissed = True  # its colours wait until it switches to Direct again
 
+    def orgb_error(self, e: BaseException):
+        self._log_error("openrgb", e)
+
     def orgb_profiles(self) -> list[str]:
         return [p["name"] for p in self.settings.get("profiles") or [] if isinstance(p.get("name"), str)]
 
@@ -712,6 +718,15 @@ class Controller:
             self.update_settings({"apps": {**cfg, "enabled": False}})
 
     # -- settings
+    def public_settings(self, s: dict | None = None) -> dict:
+        """The settings as the API shows them: without the token games post their state with (only the config
+        files written into the games need it)."""
+        s = self.settings if s is None else s
+        g = s.get("games")
+        if not isinstance(g, dict) or "token" not in g:
+            return s
+        return {**s, "games": {k: v for k, v in g.items() if k != "token"}}
+
     def update_settings(self, patch: dict) -> dict:
         if "fw_time_scale" in patch:
             emulate.set_time_scale(float(patch["fw_time_scale"]))
@@ -872,22 +887,40 @@ def make_handler(ctl: Controller):
         def log_message(self, *a):
             pass
 
-        def _local(self, post: bool) -> bool:
+        def _discard(self, length: int):
+            """Read and drop (at most DRAIN bytes of) the body of a refused request: a small one still gets its
+            answer instead of a reset connection, a big one is neither held nor waited for."""
+            left = DRAIN if length < 0 else min(length, DRAIN)
+            if left <= 0:
+                return
+            self.connection.settimeout(0.2)
+            try:
+                while left > 0:
+                    chunk = self.rfile.read1(min(left, 65536))
+                    if not chunk:
+                        return
+                    left -= len(chunk)
+            except OSError:  # (a timeout too) it sent no more
+                pass
+
+        def _local(self, post: bool, length: int = 0) -> bool:
             """Only programs on this PC and the app's own page may use the API (a macro pad key can start
             programs): refuse other host names (DNS rebinding), other web origins and non-JSON posts
-            (cross-site forms). Replies itself when refusing."""
+            (cross-site forms), before reading their body (`length` bytes). Replies itself when refusing."""
             port = self.server.server_address[1]
             ours = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
             host, origin = self.headers.get("Host"), self.headers.get("Origin")
             if host is not None and host.lower() not in ours:
-                self._send(403, {"error": "this API only answers 127.0.0.1 / localhost"})
+                no = 403, {"error": "this API only answers 127.0.0.1 / localhost"}
             elif origin is not None and origin.lower() not in {"http://" + h for h in ours}:
-                self._send(403, {"error": "requests from web pages are not allowed"})
+                no = 403, {"error": "requests from web pages are not allowed"}
             elif post and not self.path.startswith("/game/") and \
                     not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
-                self._send(415, {"error": "send JSON (Content-Type: application/json)"})
+                no = 415, {"error": "send JSON (Content-Type: application/json)"}
             else:
                 return True
+            self._discard(length)
+            self._send(*no)
             return False
 
         def _static(self, path: str) -> bool:
@@ -898,7 +931,7 @@ def make_handler(ctl: Controller):
             else:
                 return False
             full = os.path.normpath(os.path.join(WEB, rel))
-            if not full.startswith(WEB) or not os.path.isfile(full):
+            if not full.startswith(WEB + os.sep) or not os.path.isfile(full):
                 self._send(404, {"error": "not found"})
                 return True
             with open(full, "rb") as f:
@@ -980,7 +1013,7 @@ def make_handler(ctl: Controller):
                     if u.path == "/custom":
                         return self._send(200, ctl.kb.get_custom(int(q.get("colorset", ["0"])[0])))
                     if u.path == "/settings":
-                        return self._send(200, ctl.settings)
+                        return self._send(200, ctl.public_settings())
                     if u.path == "/heatmap":
                         return self._send(200, ctl.heatmap_status())
                     if u.path == "/automation":
@@ -1028,11 +1061,17 @@ def make_handler(ctl: Controller):
 
         def do_POST(self):
             try:
-                n = int(self.headers.get("Content-Length") or 0)
-                body = self.rfile.read(n)  # read before refusing, or the client sees a reset connection
-                if not self._local(post=True):
+                try:
+                    n = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    n = -1
+                if not 0 <= n <= MAX_BODY:  # read nothing big: any web page can send this (text/plain needs no asking)
+                    self._discard(n)
+                    return self._send(413 if n > MAX_BODY else 400,
+                                      {"error": f"send a Content-Length of 0 to {MAX_BODY} bytes"})
+                if not self._local(post=True, length=n):
                     return
-                req = json.loads(body or b"{}")
+                req = json.loads(self.rfile.read(n) or b"{}")
                 p = self.path
                 if p.startswith("/game/"):  # the game itself, several times a second: no app lock needed
                     try:
@@ -1110,7 +1149,9 @@ def make_handler(ctl: Controller):
                         ctl.active_profile = None
                         return self._send(200, {"apps": "stopped"})
                     if p == "/settings":
-                        return self._send(200, ctl.update_settings(req))
+                        if isinstance(req, dict) and isinstance(req.get("games"), dict):  # (GET doesn't show the token)
+                            req = {**req, "games": {**req["games"], "token": ctl.games_settings()["token"]}}
+                        return self._send(200, ctl.public_settings(ctl.update_settings(req)))
                     if p == "/openrgb":
                         return self._send(200, ctl.configure_openrgb(req))
                     if p == "/games":
@@ -1144,7 +1185,9 @@ def make_handler(ctl: Controller):
                     if p == "/close_conflict":
                         return self._send(200, {"closed": system.close_process(int(req["pid"]))})
                     if p == "/restore":
-                        d = req.get("dir") or ctl.backup_dir
+                        d = ctl.backup_dir
+                        if req.get("dir") not in (None, d):  # (any folder's config.bin was written as it was)
+                            raise ValueError("only the app's own backup (from before its first use) can be restored")
                         if not d or not os.path.isfile(os.path.join(d, "config.bin")):
                             raise ValueError("no lighting backup found")
                         ctl._apps_off()

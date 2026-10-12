@@ -19,7 +19,8 @@ import unittest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 NUMBA = importlib.util.find_spec("numba") is not None  # the "emulation" extra (the desktop app always bundles it)
-MISSING_BUILD = r"Z:\no-such-build-machine\evision_rgb\fakeeng.py"  # built on GitHub: not on this PC
+# built elsewhere (on GitHub): not on this PC. In this OS's path style, as PyInstaller builds for the OS it runs on
+MISSING_BUILD = os.path.join(os.path.abspath(os.sep), "no-such-build-machine", "evision_rgb", "fakeeng.py")
 # numba itself recompiles when a function's own bytecode changes; the stamp is what catches a change OUTSIDE it (a
 # module constant, an inlined helper: the firmware engine has many), so the engine's step lives in a constant
 ENGINE = "from numba import njit\n\nSTEP = 1\n\n\n@njit(cache=True)\ndef add1(x):\n    return x + STEP\n"
@@ -28,10 +29,9 @@ RUNNER = r'''
 import os, sys, types
 root, meipass, cache_dir, exe, ours, built_at = sys.argv[1:7]
 os.environ["NUMBA_CACHE_DIR"] = cache_dir
-if ours == "1":
+if ours == "1":  # the app's list without numba's user-wide folder: if ours declines, fail here, not write outside
     os.environ["NUMBA_CACHE_LOCATOR_CLASSES"] = ("evision_rgb.jit_cache.BundledSourceLocator,UserProvidedCacheLocator,"
-                                                 "InTreeCacheLocator,UserWideCacheLocator,IPythonCacheLocator,"
-                                                 "ZipCacheLocator")
+                                                 "InTreeCacheLocator,IPythonCacheLocator,ZipCacheLocator")
 sys.path.insert(0, root)
 sys.frozen, sys._MEIPASS, sys.executable = True, meipass, exe
 src = open(os.path.join(meipass, "evision_rgb", "fakeeng.py"), encoding="utf-8").read()
