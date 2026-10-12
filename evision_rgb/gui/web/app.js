@@ -694,13 +694,13 @@ function getPath(o, path) { return path.split(".").reduce((a, k) => a && a[k], o
 async function initAutomation() {
   const cfg = await api("/automation");
   const keyOpts = S.layout.keys.map(k => `<option value="${k.name}">${k.label}</option>`).join("");
-  $$("#tab-auto select[data-a]").forEach(s => s.innerHTML = keyOpts);
+  $$("#tab-auto select[data-a]:not(.opts)").forEach(s => s.innerHTML = keyOpts);
   const fill = c => {
     for (const el of $$("#tab-auto [data-a]")) {
       const v = getPath(c, el.dataset.a);
       if (el.type === "checkbox") el.checked = !!v;
       else if (el.type === "color") el.value = "#" + v;
-      else el.value = v;
+      else el.value = v == null ? "" : v;
       const o = $(`#tab-auto [data-o="${el.dataset.a}"]`); if (o) o.textContent = Math.round(v * 100) + "%";
     }
   };
@@ -710,10 +710,15 @@ async function initAutomation() {
     for (const el of $$("#tab-auto [data-a]")) {
       const [sec, key] = el.dataset.a.split(".");
       let v = el.type === "checkbox" ? el.checked : el.type === "color" ? hex(el.value)
-        : (el.type === "range" || el.type === "number") ? +el.value : el.value;
+        : (el.type === "range" || el.type === "number") ? +el.value
+        : "num" in el.dataset ? (el.value === "" ? null : +el.value) : el.value;
       (patch[sec] = patch[sec] || {})[key] = v;
     }
-    try { fill(await api("/automation", patch)); } catch (e) { toast(e.message, true); }
+    try {
+      const c = await api("/automation", patch);
+      fill(c);
+      if (S.status && S.status.battery) { Object.assign(S.status.battery, { saver: c.battery.enabled, brightness: c.battery.brightness }); renderBattery(); }
+    } catch (e) { toast(e.message, true); }
   }, 300);
   $$("#tab-auto [data-a]").forEach(el => el.addEventListener("input", () => {
     const o = $(`#tab-auto [data-o="${el.dataset.a}"]`); if (o) o.textContent = Math.round(el.value * 100) + "%";
@@ -743,6 +748,8 @@ function renderBattery() {
     : !b.on_battery ? "Plugged in. On battery the keyboard shows its own effect, which costs the PC nothing."
     : b.paused ? `On battery: ${effectLabel(b.paused)} is paused and comes back when you plug in.`
     : b.saver ? "On battery. Anything you start now keeps running." : "On battery (battery saver is off).";
+  if (b.dimmed) el.textContent += ` The keyboard is at brightness ${b.dimmed.to} of 4 until you plug in (then back to ${b.dimmed.from}).`;
+  else if (b.brightness != null && !b.on_battery) el.textContent += ` On battery it dims to ${b.brightness} of 4 (its lights run on the laptop's USB power).`;
 }
 function renderTimer() {
   const t = S.status && S.status.timer;

@@ -29,7 +29,9 @@ DEFAULTS = {
     "night": {"enabled": False, "start": "22:00", "end": "07:00", "brightness": 0.3},
     "timer": {"color": "00c0ff", "done_color": "ff3000"},
     "hints": {"enabled": True, "delay_ms": 500, "dim": 0.3, "custom": {}},
-    "battery": {"enabled": True},  # on battery the keyboard's own effect takes over from live effects
+    # on battery the keyboard's own effect takes over from live effects; brightness 0..4: also store that (dimmer)
+    # brightness on the keyboard while on battery (its LEDs run on the laptop's USB power), None: leave it
+    "battery": {"enabled": True, "brightness": None},
 }
 NUMBER_ROW = np.array([i for i in range(N) if 0.1 < Y[i] < 0.35])
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -168,6 +170,9 @@ def validate(cfg: dict) -> dict:
         raise ValueError("hints: custom must be an object {app: {combo: {category: [keys]}}}")
     if not isinstance(cfg["battery"]["enabled"], bool):
         raise ValueError("battery: enabled must be true or false")
+    b = cfg["battery"].get("brightness")
+    if b is not None and (isinstance(b, bool) or not isinstance(b, int) or not 0 <= b <= 4):
+        raise ValueError("battery: brightness must be a level from 0 to 4, or null to leave it as it is")
     return cfg
 
 

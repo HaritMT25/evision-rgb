@@ -13,7 +13,8 @@ POST /settings {...partial settings...}        POST /autostart {"enabled": true}
 POST /notify   {"color": "ff0000", "keys": ["Esc"], "flashes": 3, "period": 0.35}   flash keys or the board
 POST /timer    {"minutes": 25, "label": "focus"} | {"cancel": true}                 number-row countdown
 GET|POST /automation  indicators (caps_lock, mic_mute), idle/lock dimming, night schedule, battery saver
-         ({"battery": {"enabled": true}}: on battery live effects pause and the keyboard shows its own effect)
+         ({"battery": {"enabled": true}}: on battery live effects pause and the keyboard shows its own effect;
+         {"battery": {"brightness": 1}}: and it stores brightness 1 of 4 until plugged in again, null: leave it)
 POST /close_conflict {"pid": 123}              POST /restore {}  (restore pre-session backup)
 GET  /profiles                                 saved profiles (name, hardware mode, live effect)
 GET  /profiles/export?name=N[&as=code]         shareable file {"format": "evision-rgb-profile", ...} or share code
@@ -69,6 +70,7 @@ BACKUP_FILES = ("config.bin", "custom0.bin", "custom1.bin", "custom2.bin", "keym
 MODE_NAME = {i: n for n, i in MODES.items()}
 _STREAMS = {"open": 0}
 _STREAMS_LOCK = threading.Lock()
+_UNSET = object()  # "not yet": the first battery tick also restores a dim left over from before a restart
 
 
 def open_streams() -> int:
@@ -146,6 +148,7 @@ class Controller:
         self._saving = False        # battery saver active (on battery and switched on)
         self._on_battery = None
         self.battery_paused = None  # what the battery saver stopped: {"effect", "params", "overrides"} | {"apps"}
+        self._dim_for = _UNSET      # battery brightness the keyboard was last brought in line with
         self.game_on = None         # game whose lighting took over automatically ("cs2" / "dota2")
         self.game_prev = None       # what ran before it (comes back when the game ends)
         self._game_dismissed = None  # you chose other lighting during this game: don't take over again
@@ -240,7 +243,47 @@ class Controller:
                 self._pause_for_battery()
             elif not saving and self._saving:
                 self._saving = False
+                self._battery_dim(False)  # the brightness first, so the effect resumes on it (no flash between)
                 self._resume_after_battery()
+            self._battery_dim(saving)
+
+    def _battery_dim(self, saving: bool):
+        """Option battery.brightness: on battery the keyboard stores that dimmer brightness, plugged in the one from
+        before comes back (unless you changed it meanwhile). One write per change; the record is kept in the
+        settings, so quitting on battery and starting again plugged in still restores it."""
+        want = self.automation.cfg["battery"]["brightness"] if saving else None
+        rec = self.settings.get("battery_dimmed")
+        if not (isinstance(rec, dict) and isinstance(rec.get("from"), int) and isinstance(rec.get("to"), int)):
+            rec = None
+        if want == self._dim_for or (want is None and rec is None):
+            self._dim_for = want
+            return
+        try:
+            cur = self.info(0)["brightness"]
+            back = rec["from"] if rec is not None and cur == rec["to"] else cur
+            target, new = (want, {"from": back, "to": want}) if want is not None and back > want else (back, None)
+            if target != cur:
+                self._store_brightness(target)
+        except Exception:  # noqa: BLE001 - keyboard unplugged: tried again on the next tick
+            return
+        self._dim_for = want
+        if new != self.settings.get("battery_dimmed"):
+            self.update_settings({"battery_dimmed": new})
+
+    def _store_brightness(self, level: int):
+        """Store a brightness without losing what is drawn: a live effect is held while the keyboard stores it
+        (like set_hardware) and goes on with the same settings afterwards."""
+        eng = self.engine
+        keep = (eng.effect.name, dict(eng.params)) if eng.effect is not None else None
+        if keep:
+            eng.pause()
+        try:
+            self.kb.set_effect(brightness=level)
+        finally:
+            self._info_cache = (0.0, None)
+            if keep:
+                params = self._emulation_params() if keep[0] == "emulate" and self.auto_base else keep[1]
+                eng.run(keep[0], **params)
 
     def _take_lighting(self) -> dict | None:
         """Stop what the PC draws now and return it (to bring back later); None if nothing of yours ran."""
@@ -457,7 +500,9 @@ class Controller:
     def battery_status(self) -> dict:
         p = self.battery_paused
         return {"saver": self.automation.cfg["battery"]["enabled"], "on_battery": self._on_battery,
-                "paused": None if not p else "app profiles" if "apps" in p else p["effect"]}
+                "paused": None if not p else "app profiles" if "apps" in p else p["effect"],
+                "brightness": self.automation.cfg["battery"]["brightness"],
+                "dimmed": self.settings.get("battery_dimmed")}
 
     def _sync_key_hook(self):
         """Global key hook only while the heatmap is counting."""

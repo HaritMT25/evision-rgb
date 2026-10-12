@@ -41,7 +41,8 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
   locked, a night schedule, and shortcut hints (hold Ctrl and the shortcuts of the app in front light up).
 - **Battery saver**: when a laptop runs on battery, live effects, layer stacks and app profiles pause and the keyboard
   shows its own built-in effect, which costs the PC nothing. Plugging in brings back exactly what was running.
-  Indicators, notifications and the timer keep working.
+  Indicators, notifications and the timer keep working. It can also dim the keyboard on battery (its lights run
+  on the laptop's USB power) and bring the brightness back when you plug in.
 - **Light on CPU**: a picture that doesn't change isn't redrawn 60 times a second or resent to the keyboard (only a
   keep-alive is), and the app window's preview only receives frames that changed.
 - **App profiles**: lighting follows the program in front (Spotify → music, VS Code → typing ripples, a game → a layer stack).
@@ -119,8 +120,8 @@ with Keyboard() as kb:
 `GET|POST /openrgb {"enabled": true, "port": 6742}` runs the OpenRGB SDK server. Game lighting: the game posts to `POST /game/cs2` / `/game/dota2` (with the token from its config file);
 `GET /games` shows what is installed and set up, `POST /games/setup {"game": "cs2"}` / `/games/remove` write or delete
 the config file. `GET /nowplaying` says what is playing (title, artist, app, cover colours) and `/nowplaying/cover.png` serves the
-cover. `GET /status` includes `battery` (`on_battery`, `saver`, `paused`); `POST /automation {"battery": {"enabled": false}}`
-switches the battery saver off. See `evision_rgb/server.py`.
+cover. `GET /status` includes `battery` (`on_battery`, `saver`, `paused`, `brightness`, `dimmed`); `POST /automation {"battery": {"enabled": false}}`
+switches the battery saver off, `{"battery": {"brightness": 1}}` dims the keyboard to 1 of 4 on battery (`null`: leave it). See `evision_rgb/server.py`.
 
 A layer stack is an ordinary live effect:
 ```json

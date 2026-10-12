@@ -235,6 +235,13 @@ try {
   await js(`const t = $('[data-a="battery.enabled"]'); t.checked = false; t.dispatchEvent(new Event("input")); await T.wait(700);`);
   check("switching it off is saved", (await js(`return (await api("/automation")).battery.enabled`)) === false);
   await js(`const t = $('[data-a="battery.enabled"]'); t.checked = true; t.dispatchEvent(new Event("input")); await T.wait(700);`);
+  check("dimming on battery is off by default (leave it as it is)", (await js(`return $('[data-a="battery.brightness"]').value`)) === "");
+  check("its list holds brightness levels, not keys", (await js(`return $$('[data-a="battery.brightness"] option').length`)) === 5);
+  await js(`const s = $('[data-a="battery.brightness"]'); s.value = "1"; s.dispatchEvent(new Event("input")); await T.wait(700);`);
+  check("picking a level is saved as a number", (await js(`return (await api("/automation")).battery.brightness`)) === 1);
+  await js(`const s = $('[data-a="battery.brightness"]'); s.value = ""; s.dispatchEvent(new Event("input")); await T.wait(700);`);
+  check("leave it as it is is saved as null", (await js(`return (await api("/automation")).battery.brightness`)) === null);
+  check("the key pickers still list keys", (await js(`return $$('[data-a="caps_lock.key"] option').length`)) > 80);
   await shot("automation-battery");
   await js(`await api("/run", {effect: "solid", params: {color: "203040"}}); await T.wait(2300);`);
   check("a still live picture is captioned as drawn less often", /still/.test(await js(`return $("#caption").textContent`)),

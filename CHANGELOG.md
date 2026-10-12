@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 (2026-10-11)
+- **Dim the keyboard on battery** (Automation, off by default): the battery saver can also store a lower brightness
+  on the keyboard while the laptop runs on battery, since its lights are powered by the laptop's USB port. Plugging
+  in brings the old brightness back, unless you changed it meanwhile; this works across a restart too, and for a
+  keyboard that was unplugged at the time. `POST /automation {"battery": {"brightness": 1}}` (0..4, null = leave it).
+
 ## 0.6.0 (2026-10-11)
 - New live effects after FastLED's classic examples (MIT): **Fire** (a flame in every column, after Fire2012),
   **Ocean** (blue-green waves with whitecaps, after Pacifica), **Twinkle** (keys twinkling like stars, after
