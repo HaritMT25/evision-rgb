@@ -30,7 +30,7 @@ class SelfTest(unittest.TestCase):
     def test_the_report_names_every_check(self):
         code, r = self.run_selftest()
         self.assertEqual(set(r["checks"]), {"modules", "live effects", "app window files", "numba JIT",
-                                            "media controls", "pad key images"})
+                                            "firmware engine", "media controls", "pad key images"})
         from evision_rgb import __version__
         self.assertEqual(r["version"], __version__)
         self.assertEqual(code, 0 if r["ok"] else 1)
@@ -128,12 +128,9 @@ class Workflow(unittest.TestCase):
                        "release_notes.py", "app-constraints.txt", "Version matches the tag"):
             self.assertIn(needle, wf)
 
-    def test_a_new_build_keeps_the_compiled_firmware_engine(self):
-        # numba's cache is keyed by the source's mtime: the bundled copy must not carry the build time
-        sh = read("scripts", "build_exe.sh")
-        self.assertIn('git log -1 --format=%cI -- evision_rgb/fw8051_fast.py', sh)
-        self.assertIn('touch -d "$T" "$F"', sh)
-        self.assertIn("fetch-depth: 0", read(".github", "workflows", "release.yml"), "a shallow clone dates every file by HEAD")
+    def test_the_firmware_engine_ships_as_source_for_its_cache(self):
+        # jit_cache.BundledSourceLocator stamps the compiled engine by this bundled copy (tests/test_jit_cache.py)
+        self.assertIn("fw8051_fast.py;evision_rgb", read("scripts", "build_exe.sh"))
 
     def test_the_app_extra_bundles_everything(self):
         py = read("pyproject.toml")

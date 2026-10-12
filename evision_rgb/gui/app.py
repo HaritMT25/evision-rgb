@@ -19,6 +19,9 @@ from .. import settings as settings_mod
 
 # numba (exact firmware effect emulation) caches compiled code here; the frozen app dir is read-only
 os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(settings_mod.DIR, "numba-cache"))
+# ...stamped by the engine's own (bundled) source, not by the whole .exe: a new version doesn't compile it again
+os.environ.setdefault("NUMBA_CACHE_LOCATOR_CLASSES", "evision_rgb.jit_cache.BundledSourceLocator,UserProvidedCacheLocator,"
+                      "InTreeCacheLocator,UserWideCacheLocator,IPythonCacheLocator,ZipCacheLocator")
 from ..server import DEFAULT_PORT, Controller, build_server
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -296,6 +299,13 @@ def selftest(path: str) -> int:
             raise AssertionError("numba computed a wrong result")
         return "compiles"
 
+    def firmware_engine():  # the exact engine imports (numba picks its cache locator now) without compiling
+        from .. import fw8051_fast
+        loc = type(fw8051_fast.advance_cycles._cache._impl._locator).__name__
+        if getattr(sys, "frozen", False) and loc != "BundledSourceLocator":
+            raise AssertionError(f"the engine is cached by {loc}, so every new version would compile it again")
+        return f"cached by {loc}"
+
     def media_controls():
         from ..media import windows_fetch
         return "something is playing" if windows_fetch() else "nothing is playing"
@@ -306,7 +316,7 @@ def selftest(path: str) -> int:
         return len(encode(m, 0, render_key(m.keys[0].size, "Test", "202024", "🎵")))
 
     for name, fn in (("modules", modules), ("live effects", effects), ("app window files", web), ("numba JIT", jit),
-                     ("media controls", media_controls), ("pad key images", pad_images)):
+                     ("firmware engine", firmware_engine), ("media controls", media_controls), ("pad key images", pad_images)):
         check(name, fn)
     from .. import __version__
     ok = all(c["ok"] for c in checks.values())

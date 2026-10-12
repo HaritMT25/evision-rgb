@@ -19,9 +19,9 @@
   streams no longer draws over it and loses your effect. Live key colours stay when an indicator or a notification
   ends. Picking other lighting switches app profiles off for good (the App Profiles switch shows it), so the next
   start brings back what you chose; restoring the backup or switching app profiles off is also what stays.
-- **Faster first start after an update**: the exact-effect engine compiled for your PC is kept when the new version
-  is unzipped into the same folder (and the engine itself didn't change), instead of being compiled again (up to a
-  minute of one CPU core).
+- **Faster first start after an update**: the exact-effect engine compiled for your PC is kept for the next version
+  (wherever you unzip it) unless the engine itself changed, instead of being compiled again (up to a minute of one
+  CPU core). Its cache now lives with the app's settings in `%APPDATA%\EVisionRGB\numba-cache`.
 
 ## 0.6.0 (2026-10-11)
 - New live effects after FastLED's classic examples (MIT): **Fire** (a flame in every column, after Fire2012),
