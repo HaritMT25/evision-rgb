@@ -13,6 +13,9 @@
   settings and the recent events in one block for a bug report, with tokens hidden and your home folder shown as ~.
 - The **tray icon's tooltip** says what is running (by the names the app uses) and anything unusual: the keyboard
   disconnected, the battery saver's pause or dim.
+- **Faster first start after an update**: the exact-effect engine compiled for your PC is kept when the new version
+  is unzipped into the same folder (and the engine itself didn't change), instead of being compiled again (up to a
+  minute of one CPU core).
 
 ## 0.6.0 (2026-10-11)
 - New live effects after FastLED's classic examples (MIT): **Fire** (a flame in every column, after Fire2012),
