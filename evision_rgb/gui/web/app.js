@@ -217,7 +217,9 @@ function setCaption(f) {
 // ------------------------------------------------------------------ status
 async function statusLoop() {
   try {
+    const was = S.status && S.status.keyboard;
     S.status = await api("/status");
+    if (was === "disconnected" && S.status.keyboard === "connected") loadInfo().catch(() => { });  // (the form)
     const dot = $("#statusDot");
     dot.className = "dot " + (S.status.keyboard === "disconnected" ? "bad" : S.status.live ? "live" : "ok");
     const bat = S.status.battery;
@@ -292,32 +294,42 @@ async function loadInfo() {
   if (!S.dirty) { S.group = S.settings.custom_active || 0; markGroup(); }
   renderDevInfo();
 }
-const pushEffect = debounce(async () => {
-  const body = {
-    mode: +$("#hwMode").value, brightness: +$("#hwBright").value, speed: 4 - +$("#hwSpeed").value,
-    color: S.hwBrushColor, random: $("#hwRandom").checked,
-    direction: +(($("#hwDir button.on") || {}).dataset?.v || 0),
-  };
-  if (body.mode === 20) body.colorset = 0;
-  if (body.mode === 17) body.variant = +(($("#hwVariant button.on") || {}).dataset?.v ?? 3);
+// only what you change is sent (the server changes just those fields): the stored effect may have been changed
+// elsewhere meanwhile (a profile from the tray or the pad, an agent), and the form may be older than that
+let hwPending = {};
+const sendEffect = debounce(async () => {
+  const body = hwPending; hwPending = {};
   await safe(() => api("/effect", body));
   await loadInfo(); S.lastFrameAt = 0;
 }, 220);
+function pushEffect(fields) { Object.assign(hwPending, fields); sendEffect(); }
+const hwVariant = () => +(($("#hwVariant button.on") || {}).dataset?.v ?? 3);
 function initLight() {
   const sel = $("#hwMode");
   sel.innerHTML = S.modes.map(m => `<option value="${m.id}">${modeLabel(m.name)}${m.id === 20 ? " (per-key)" : ""}</option>`).join("");
-  sel.onchange = pushEffect;
-  $("#hwBright").oninput = () => { $("#hwBrightV").textContent = `${$("#hwBright").value}/4`; pushEffect(); };
-  $("#hwSpeed").oninput = () => { $("#hwSpeedV").textContent = `${$("#hwSpeed").value}/4`; pushEffect(); };
-  $$("#hwDir button").forEach(b => b.onclick = () => { $$("#hwDir button").forEach(x => x.classList.remove("on")); b.classList.add("on"); pushEffect(); });
-  $("#hwRandom").onchange = pushEffect;
-  $$("#hwVariant button").forEach(b => b.onclick = () => { $$("#hwVariant button").forEach(x => x.classList.remove("on")); b.classList.add("on"); pushEffect(); });
+  sel.onchange = () => {
+    const mode = +sel.value;
+    pushEffect({ mode, ...(mode === 20 ? { colorset: 0 } : {}), ...(mode === 17 ? { variant: hwVariant() } : {}) });
+  };
+  $("#hwBright").oninput = () => { $("#hwBrightV").textContent = `${$("#hwBright").value}/4`; pushEffect({ brightness: +$("#hwBright").value }); };
+  $("#hwSpeed").oninput = () => { $("#hwSpeedV").textContent = `${$("#hwSpeed").value}/4`; pushEffect({ speed: 4 - +$("#hwSpeed").value }); };
+  $$("#hwDir button").forEach(b => b.onclick = () => {
+    $$("#hwDir button").forEach(x => x.classList.remove("on")); b.classList.add("on"); pushEffect({ direction: +b.dataset.v });
+  });
+  $("#hwRandom").onchange = () => pushEffect({ random: $("#hwRandom").checked });
+  $$("#hwVariant button").forEach(b => b.onclick = () => {
+    $$("#hwVariant button").forEach(x => x.classList.remove("on")); b.classList.add("on"); pushEffect({ variant: +b.dataset.v });
+  });
   sel.addEventListener("change", () => ($("#hwVariantRow").style.display = +sel.value === 17 ? "" : "none"));
   buildPalette($("#hwPalette"), c => {
     S.hwBrushColor = c; $("#hwChip").style.background = "#" + c; $("#hwHex").textContent = "#" + c;
     $("#hwRandom").checked = false;  // choosing a colour means "use this colour" (random overrides it)
-    $("#hwPalette")._mark(); pushEffect();
+    $("#hwPalette")._mark(); pushEffect({ color: c, random: false });
   }, () => S.hwBrushColor);
+  // the window comes back (from the tray, another program): show what is stored now
+  const fresh = () => { if (!Object.keys(hwPending).length) loadInfo().catch(() => { }); };
+  window.addEventListener("focus", fresh);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) fresh(); });
 }
 
 // ------------------------------------------------------------------ custom tab
@@ -380,15 +392,22 @@ function initCustom() {
   $("#cUndo").onclick = () => customStep(false);
   $("#cRedo").onclick = () => customStep(true);
   $$("[data-preset]").forEach(b => b.onclick = () => setCustom(presets(b.dataset.preset)));
+  // a preview (unsaved changes) ending brings back what you had; with nothing previewed nothing changes
+  const endPreview = () => api("/preview/end", {}).catch(() => { });
   $$("#cGroup button").forEach(b => b.onclick = async () => {
-    if (S.dirty && !(await modal("Discard changes?", "Switching group discards the unsaved preview.", [["Cancel", false], ["Discard", true, "primary"]]))) return;
-    S.group = +b.dataset.v; markGroup(); await loadCustom(); await api("/stop", {}).catch(() => { });
+    const previewing = S.dirty;
+    if (previewing && !(await modal("Discard changes?", "Switching group discards the unsaved preview.", [["Cancel", false], ["Discard", true, "primary"]]))) return;
+    S.group = +b.dataset.v; markGroup(); await loadCustom();
+    if (previewing) await endPreview();
   });
   $("#cLoad").onclick = () => safe(() => loadCustom(true), "Loaded what the keyboard currently shows");
-  $("#cDiscard").onclick = async () => { await api("/stop", {}).catch(() => { }); await loadCustom(); toast("Preview discarded"); };
+  $("#cDiscard").onclick = async () => { if (S.dirty) await endPreview(); await loadCustom(); toast("Preview discarded"); };
   $("#cSave").onclick = () => safe(async () => {
-    await api("/custom", { colors: S.custom, colorset: 0, default: "000000" });
     const groups = [...(S.settings.custom_groups || [null, null, null])];
+    const shown = S.settings.custom_active || 0;
+    if (shown !== S.group && !groups[shown])  // the keyboard's layout was never saved in the app: keep it as that group
+      groups[shown] = await api("/custom?colorset=0");
+    await api("/custom", { colors: S.custom, colorset: 0, default: "000000" });
     groups[S.group] = { ...S.custom };
     S.settings = await api("/settings", { custom_groups: groups, custom_active: S.group });
     setDirty(false); await loadInfo();
@@ -556,7 +575,16 @@ const LAYER_TEMPLATES = [
 ];
 const saveLayerDraft = debounce(() => api("/settings", { layers_draft: S.layers }).catch(() => { }), 700);
 const layersRunning = () => !!(S.status && S.status.effect === "layers" && !S.status.apps);
-const lyLive = debounce(() => { if (layersRunning()) runLayers(false).catch(() => { }); }, 250);
+const lyLive = debounce(() => {
+  if (!layersRunning()) return;
+  if (S.layers.length) runLayers(false).catch(() => { });
+  else stopLayers();  // the running stack lost its last layer
+}, 250);
+async function stopLayers() {
+  await safe(() => api("/stop", {})).catch(() => { });
+  S.status = { ...(S.status || {}), live: false, effect: null };
+  markLayersRunning();
+}
 async function runLayers(announce = true) {
   if (!S.layers.length) return toast("Add a layer first", true);
   await safe(() => api("/run", { effect: "layers", params: { layers: S.layers } }));
@@ -566,10 +594,11 @@ async function runLayers(announce = true) {
 }
 function markLayersRunning() { $("#lyStart").textContent = layersRunning() ? "● Layers running" : "Start layers"; }
 // after every edit: remember it for undo, redraw, save the draft, update the keyboard if the stack runs
-function lyCommit({ structural = true, record = true } = {}) {
+function lyCommit({ structural = true, record = true, live = true } = {}) {
   if (record && S.lyHist) S.lyHist.push(S.layers);
   if (structural) renderLayers();
-  paintSelection(); markUndo(); saveLayerDraft(); lyLive();
+  paintSelection(); markUndo(); saveLayerDraft();
+  if (live) lyLive();
 }
 function lyStep(redo) {
   const s = S.lyHist && (redo ? S.lyHist.redo() : S.lyHist.undo());
@@ -650,10 +679,10 @@ function setLiveView(v) {
   try { localStorage.setItem("evrgb.liveView", S.liveView); } catch (e) { }
   paintSelection();
 }
-function setLayers(layers, select = null) {
+function setLayers(layers, select = null, live = true) {  // live: run the new stack if a stack runs
   S.layers = JSON.parse(JSON.stringify(layers));
   S.lySel = select;
-  lyCommit();
+  lyCommit({ live });
 }
 function initLayers() {
   const s = S.settings, last = s.last_live;
@@ -705,8 +734,9 @@ async function initAutomation() {
     }
   };
   fill(cfg);
+  let edits = 0;  // typing since a save was sent is kept: that save's reply doesn't fill the fields (the next save sends it)
   const save = debounce(async () => {
-    const patch = {};
+    const sent = edits, patch = {};
     for (const el of $$("#tab-auto [data-a]")) {
       const [sec, key] = el.dataset.a.split(".");
       let v = el.type === "checkbox" ? el.checked : el.type === "color" ? hex(el.value)
@@ -716,12 +746,13 @@ async function initAutomation() {
     }
     try {
       const c = await api("/automation", patch);
-      fill(c);
+      if (edits === sent) fill(c);
       if (S.status && S.status.battery) { Object.assign(S.status.battery, { saver: c.battery.enabled, brightness: c.battery.brightness }); renderBattery(); }
     } catch (e) { toast(e.message, true); }
   }, 300);
   $$("#tab-auto [data-a]").forEach(el => el.addEventListener("input", () => {
     const o = $(`#tab-auto [data-o="${el.dataset.a}"]`); if (o) o.textContent = Math.round(el.value * 100) + "%";
+    edits++;
     save();
   }));
   $("#tStart").onclick = () => safe(() => api("/timer", { minutes: +$("#tMin").value, label: $("#tLabel").value }), "Timer started");
@@ -815,7 +846,7 @@ function appsConfig() {
     rules.push({ match: m, effect: $("[data-k=effect]", tr).value || null, params });
   }
   const d = $("#appsDefault").value, old = (S.settings.apps || {}).default;
-  const dParams = d === "layers" ? (old && old.effect === "layers" ? old.params : { layers: S.layers }) : {};
+  const dParams = old && old.effect === d ? (old.params || {}) : d === "layers" ? { layers: S.layers } : {};  // (kept)
   return { enabled: $("#appsOn").checked, rules, default: d ? { effect: d, params: dParams } : null };
 }
 function initApps() {
@@ -834,7 +865,7 @@ function initApps() {
   };
   const save = () => safe(async () => {
     const cfg = appsConfig(); const r = await api("/apps", cfg); S.settings.apps = cfg; return r;
-  }, "App profiles saved");
+  }, "App profiles saved").catch(() => { $("#appsOn").checked = !!(S.settings.apps || {}).enabled; });  // (refused: as it was)
   $("#appsSave").onclick = save;
   $("#appsOn").onchange = save;
 }
@@ -908,7 +939,8 @@ function renderProfiles(selName) {
   const ps = S.settings.profiles || [];
   S.profileName = selName && ps.some(p => p.name === selName) ? selName : null;
   $("#profileSel").innerHTML = `<option value="">${ps.length ? "Profiles…" : "No profiles"}</option>` +
-    ps.map((p, i) => `<option value="${i}" ${p.name === S.profileName ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+    ps.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join("");
+  $("#profileSel").value = "";  // the current one is named beside the list: picking it again is a change too
   $("#profileName").textContent = S.profileName || "no profile";
 }
 async function captureProfile(name, live) {
@@ -927,7 +959,8 @@ async function captureProfile(name, live) {
 async function applyProfile(p) {
   const r = await api("/profiles/apply", { name: p.name });  // one step on the server: no flash of the old lighting
   S.status = { ...(S.status || {}), ...r.live, apps: null };
-  if (p.live && p.live.effect === "layers" && Array.isArray((p.live.params || {}).layers)) setLayers(p.live.params.layers);
+  // the editor shows the profile's stack; it runs already (running it again would end it being the current profile)
+  if (p.live && p.live.effect === "layers" && Array.isArray((p.live.params || {}).layers)) setLayers(p.live.params.layers, null, false);
   markLayersRunning();
   await loadInfo(); S.lastFrameAt = 0; setDirty(false);
   if (S.tab === "custom") await loadCustom();
@@ -995,26 +1028,36 @@ async function importFlow() {
 function initProfiles() {
   renderProfiles();
   $("#profileSel").onchange = () => {
-    const p = S.settings.profiles[+$("#profileSel").value]; if (!p) return;
+    const v = $("#profileSel").value, p = v === "" ? null : (S.settings.profiles || [])[+v];  // ("" is "Profiles…")
+    if (!p) return renderProfiles(S.profileName);
     safe(() => applyProfile(p), `Profile "${p.name}" applied`).then(() => renderProfiles(p.name), () => renderProfiles(S.profileName));
   };
   $("#profileAdd").onclick = () => saveProfileFlow();
   $("#profileImport").onclick = () => importFlow().catch(() => { });
-  $("#profileMenu").onclick = async () => {
-    const i = $("#profileSel").value; if (i === "") return toast("Choose a profile first");
-    const p = S.settings.profiles[+i];
+  $("#profileMenu").onclick = async () => {  // the current profile (named beside the list)
+    const i = (S.settings.profiles || []).findIndex(x => x.name === S.profileName);
+    if (i < 0) return toast("Choose a profile first");
+    const p = S.settings.profiles[i];
     const act = await modal(`Profile "${p.name}"`, '<input class="inp" value="' + esc(p.name) + '">',
       [["Delete", "delete"], ["Export file", "export"], ["Share code", "share"], ["Update with current lighting", "update"],
        ["Rename", "rename", "primary"]]);
     if (act === "export") return safe(() => exportProfile(p)).catch(() => { });
     if (act === "share") return safe(() => shareProfile(p)).catch(() => { });
+    if (act === "rename") {  // on the server: names stay unique, and the pad keys that apply it follow
+      const to = cleanName($("#mBody input").value);
+      if (!to || to === p.name) return;
+      const r = await safe(() => api("/profiles/rename", { name: p.name, to }), "Profile renamed").catch(() => null);
+      if (!r) return;
+      S.settings = await api("/settings");
+      renderProfiles(r.name);
+      return padLoad().catch(() => { });
+    }
     let ps = [...S.settings.profiles];
-    if (act === "delete") ps.splice(+i, 1);
-    else if (act === "update") ps[+i] = await captureProfile(p.name);
-    else if (act === "rename") ps[+i] = { ...p, name: cleanName($("#mBody input").value) || p.name };
+    if (act === "delete") ps.splice(i, 1);
+    else if (act === "update") ps[i] = await captureProfile(p.name);
     else return;
-    S.settings = await safe(() => api("/settings", { profiles: ps }), "Profiles updated");
-    renderProfiles(act === "delete" ? null : ps[+i].name);
+    S.settings = await safe(() => api("/settings", { profiles: ps }), "Profiles updated").catch(() => S.settings);
+    renderProfiles(act === "delete" ? null : p.name);
   };
 }
 
@@ -1046,6 +1089,7 @@ function actionLabel(a) {
 }
 async function padLoad() {
   S.pad.st = await api("/pad");
+  S.pad.saved = JSON.parse(JSON.stringify(S.pad.st.configs || {}));  // what the server has (padSaveNow)
   if (!S.pad.family) S.pad.family = S.pad.st.connected ? S.pad.st.model.family : "akp03";
   renderPad();
 }
@@ -1161,10 +1205,25 @@ function padCollect() {  // editor -> S.pad.st.configs
     cfg.knobs[S.pad.sel.i] = k;
   }
 }
+function unfinished(a) {  // an action still being typed (any key or knob): not sent until it is finished
+  if (a && a.type === "hotkey" && (!a.keys || /\+\s*$/.test(a.keys))) return "Finish the hotkey, e.g. ctrl+shift+m";
+  if (a && a.type === "launch" && !a.target) return "Enter a program, file or web address";
+  return "";
+}
 async function padSaveNow() {
-  const cfg = padCfg();
-  const res = await api("/pad", { model: S.pad.family, brightness: cfg.brightness, keys: cfg.keys, knobs: cfg.knobs });
-  S.pad.st.configs[S.pad.family] = res;
+  const cfg = padCfg(), last = (S.pad.saved || {})[S.pad.family] || {};
+  // unfinished actions go as they were last saved, so everything else is saved meanwhile
+  const keys = cfg.keys.map((k, i) => unfinished(k.action) ? { ...k, action: ((last.keys || [])[i] || {}).action || { type: "none" } } : k);
+  const knobs = cfg.knobs.map((kn, i) => {
+    const out = {};
+    for (const [mv, a] of Object.entries(kn || {})) {
+      const v = unfinished(a) ? ((last.knobs || [])[i] || {})[mv] : a;
+      if (v) out[mv] = v;
+    }
+    return out;
+  });
+  const res = await api("/pad", { model: S.pad.family, brightness: cfg.brightness, keys, knobs });
+  (S.pad.saved = S.pad.saved || {})[S.pad.family] = res;  // (the editor keeps its own copy: typing during the save stays)
   S.pad.v++;
   for (const b of $$("#padView .pkey.lcd img")) b.src = b.src.replace(/v=\d+/, "v=" + S.pad.v);
   return res;
@@ -1175,19 +1234,15 @@ function padErr(msg) {  // shown next to the editor (typing a hotkey is invalid 
   el.textContent = msg || "Saved automatically.";
   el.classList.toggle("err", !!msg);
 }
-function padIncomplete() {  // still being typed: don't send it yet
+function padIncomplete() {  // what the selected key / knob still needs (shown next to its editor)
   const cfg = padCfg(), acts = S.pad.sel.kind === "key" ? [cfg.keys[S.pad.sel.i].action] : Object.values(cfg.knobs[S.pad.sel.i] || {});
   for (const a of acts) {
-    if (a.type === "hotkey" && (!a.keys || /\+\s*$/.test(a.keys))) return "Finish the hotkey, e.g. ctrl+shift+m";
-    if (a.type === "launch" && !a.target) return "Enter a program, file or web address";
+    const w = unfinished(a);
+    if (w) return w;
   }
   return "";
 }
-const padSave = () => {
-  const wait = padIncomplete();
-  if (wait) return padErr(wait);
-  return padSaveNow().then(() => padErr(""), e => padErr(e.message));
-};
+const padSave = () => padSaveNow().then(() => padErr(padIncomplete()), e => padErr(e.message));
 function initPad() {
   $$("#padFamily button").forEach(b => b.onclick = () => { S.pad.family = b.dataset.v; S.pad.sel = { kind: "key", i: 0 }; renderPad(); });
   const saveB = debounce(padSave, 300);

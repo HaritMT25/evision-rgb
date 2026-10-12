@@ -815,6 +815,50 @@ class Controller:
     def find_profile(self, name: str) -> dict | None:
         return next((p for p in self.settings.get("profiles") or [] if p.get("name") == name), None)
 
+    def rename_profile(self, name, to) -> dict:
+        """Rename a saved profile: names stay unique (profiles are applied by name), and the pad keys and knobs that
+        apply it follow. KeyError: no such profile; ValueError: no name, or one another profile has."""
+        p = self.find_profile(name)
+        if p is None:
+            raise KeyError(f"no profile named {name!r}")
+        if not isinstance(to, str) or not to.strip():
+            raise ValueError("a profile needs a name")
+        new = profiles.clean_name(to)
+        if new != name and self.find_profile(new) is not None:
+            raise ValueError(f"there is already a profile named {new!r}")
+
+        def follow(a):
+            return {**a, "name": new} if isinstance(a, dict) and a.get("type") == "profile" and a.get("name") == name else a
+        pads = {}
+        for family, cfg in (self.settings.get("pads") or {}).items():
+            cfg = dict(cfg)
+            cfg["keys"] = [{**k, "action": follow(k.get("action"))} if isinstance(k, dict) else k
+                           for k in cfg.get("keys") or []]
+            cfg["knobs"] = [{mv: follow(a) for mv, a in k.items()} if isinstance(k, dict) else k
+                            for k in cfg.get("knobs") or []]
+            pads[family] = cfg
+        renamed = {**p, "name": new}
+        self.update_settings({"profiles": [renamed if x is p else x for x in self.settings.get("profiles") or []],
+                              "pads": pads})
+        if self.active_profile == name:
+            self.active_profile = new
+        return renamed
+
+    def end_preview(self) -> dict:
+        """A preview ends (a live effect run with remember=False: the custom colours tab while you paint): what you
+        chose comes back, as a restart of the app would bring it (app profiles if they are on, else the remembered
+        live effect, else the keyboard's own effect). On battery with the saver on, it waits for the charger."""
+        s = self.settings
+        apps, last = s.get("apps") or {}, s.get("last_live")
+        want = {"apps": apps} if apps.get("enabled") else (
+            {"effect": last["effect"], "params": last.get("params") or {}, "overrides": {}} if last else None)
+        self.engine.stop()
+        if want and self._saving:
+            self.battery_paused = want
+        else:
+            self._give_back(want)
+        return self.engine.status()
+
     def import_profile(self, doc) -> dict:
         """Validate a shared file / share code and add it under a free name. Never touches the keyboard."""
         p = profiles.read_doc(doc)
@@ -1195,6 +1239,14 @@ def make_handler(ctl: Controller):
                     if p == "/profiles/import":
                         prof = ctl.import_profile(req)
                         return self._send(200, {"name": prof["name"], "profile": prof})
+                    if p == "/profiles/rename":
+                        try:
+                            prof = ctl.rename_profile(req.get("name"), req.get("to"))
+                        except KeyError as e:
+                            return self._send(404, {"error": str(e.args[0])})
+                        return self._send(200, {"name": prof["name"], "profile": prof})
+                    if p == "/preview/end":
+                        return self._send(200, ctl.end_preview())
                     if p == "/profiles/apply":
                         name = req.get("name") if isinstance(req, dict) else None
                         prof = ctl.find_profile(name)

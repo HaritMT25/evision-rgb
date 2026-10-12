@@ -218,6 +218,10 @@ def install(test_case) -> FakeKeyboard:
     """Patch evision_rgb.protocol.hid with a fresh simulated keyboard for the duration of a test."""
     import evision_rgb.protocol as proto
     from evision_rgb import emulate
+    from evision_rgb import settings as st
+    # settings from the app's old name are migrated when there are none: never the PC's real ones in a test
+    test_case.addCleanup(setattr, st, "OLD_DIR", st.OLD_DIR)
+    st.OLD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "no-such-folder", "AK820Control")
     # the simulated keyboard is not the real one: use the approximation, never the firmware engine
     saved = dict(emulate._FW)
     emulate._FW.update(tried=True, base=None, source="disabled in tests", disabled=True)

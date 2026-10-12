@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.1 (2026-10-12)
+- **Fixes in the app window**, from a review of it:
+  - *Light Settings* sends only what you change. Moving one slider stored every field as the form showed it, which
+    undid a profile picked from the tray or the pad meanwhile; the form also follows such changes when the window
+    comes back, and when the keyboard reconnects.
+  - Choosing *Profiles…* at the top of the list no longer applies the first profile, and picking the current profile
+    again applies it again (the list is ready for a new pick; the current profile is named beside it).
+  - Renaming a profile can't give two profiles the same name, and the macro pad keys that apply it follow the new name
+    (they failed). `POST /profiles/rename {"name": "Gaming", "to": "Gaming night"}`.
+  - Switching custom colour groups, or *Discard*, no longer ends your lighting: a discarded preview brings back what you
+    had (`POST /preview/end`). The first save of another group keeps the layout the keyboard showed as group 1 (it
+    was lost).
+  - Saving app profiles keeps the default's options, and a refused save puts the switch back.
+  - Applying a profile with a layer stack from the window keeps it the current profile (the pad's highlight and *next
+    profile* follow it); removing the last layer of a running stack stops it.
+  - A pad key whose action is still being set up no longer stops the other keys being saved, and typing in the
+    automation or pad fields while a change saves is no longer lost.
+
 ## 0.7.0 (2026-10-12)
 - **Dim the keyboard on battery** (Automation, off by default): the battery saver can also store a lower brightness
   on the keyboard while the laptop runs on battery, since its lights are powered by the laptop's USB port. Plugging

@@ -262,7 +262,98 @@ try {
   check("the App Profiles switch shows them running", await js(`return $("#appsOn").checked === true`));
   await js(`showTab("live"); await api("/run", { effect: "solid", params: { color: "102030" } }); showTab("apps"); await T.wait(500);`);
   check("picking other lighting elsewhere shows them off", await js(`return $("#appsOn").checked === false`));
-  check("no JavaScript errors", errors.length === 0, errors.slice(0, 5).join(" | "));
+
+  // ---- found by a review of the window (2026-10-12); each starts from a state it sets up itself
+  // (requests are recorded / slowed down by wrapping fetch: api() uses it)
+  await js(`window.__f = window.fetch; window.__posts = []; window.__slow = {};
+    window.fetch = async (u, o) => { const p = String(u).replace(location.origin, "").split("?")[0];
+      if (o && o.method === "POST") { window.__posts.push(p); if (window.__slow[p]) await T.wait(window.__slow[p]); }
+      return window.__f(u, o); };`);
+  await js(`await api("/stop", {}); showTab("light"); await T.wait(700);
+            await api("/effect", { mode: 3, color: "ff7200", brightness: 3, speed: 2 }); await T.wait(200);`);  // e.g. from the tray
+  await js(`const s = $("#hwSpeed"); s.value = 1; s.dispatchEvent(new Event("input")); await T.wait(900);`);
+  let hw = await js(`return await api("/info")`);
+  check("Light Settings sends only what you change (not a stale form)", hw.mode_id === 3 && hw.color === "ff7200" && hw.speed === 3,
+    `${hw.mode} ${hw.color} speed ${hw.speed}`);
+  await js(`await api("/effect", { mode: 5, color: "00ff00" }); window.dispatchEvent(new Event("focus")); await T.wait(700);`);
+  check("and shows changes made elsewhere when the window comes back", (await js(`return $("#hwMode").value`)) === "5");
+
+  await js(`await api("/settings", { profiles: [{ name: "Green", hardware: { mode: 6, color: "00ff00" } },
+              { name: "Breath", hardware: { mode: 5, color: "0000ff" } },
+              { name: "Layered", hardware: { mode: 6, color: "ffffff" }, live: { effect: "layers", params: { layers: [{ effect: "rainbow" }] } } }] });
+            S.settings = await api("/settings"); renderProfiles(); await api("/effect", { mode: 3 }); await T.wait(100);`);
+  await js(`T.set("#profileSel", ""); await T.wait(800);`);
+  check('choosing "Profiles…" in the list applies nothing', (await js(`return (await api("/info")).mode_id`)) === 3);
+  await js(`T.set("#profileSel", "0"); await T.wait(900);`);
+  check("a profile picked from the list is applied", (await js(`return (await api("/info")).mode_id`)) === 6);
+  check("the list is ready to pick it again (it shows Profiles…, the name is beside it)",
+    (await js(`return $("#profileSel").value`)) === "" && (await js(`return $("#profileName").textContent`)) === "Green");
+  await js(`$("#profileMenu").click(); await T.wait(300); $("#mBody input").value = "Breath"; T.modalButton("Rename"); await T.wait(800);`);
+  check("renaming a profile to a name in use is refused",
+    JSON.stringify((await js(`return (await api("/settings")).profiles`)).map(p => p.name)) === '["Green","Breath","Layered"]');
+  await js(`window.__posts = []; T.set("#profileSel", "2"); await T.wait(1200);`);
+  check("applying a profile with a layer stack doesn't run it again (it would stop being the current profile)",
+    !(await js(`return window.__posts`)).includes("/run"), JSON.stringify(await js(`return window.__posts`)));
+
+  await js(`showTab("live"); await api("/run", { effect: "rainbow", params: { speed: 0.25 } }); S.status = await api("/status");
+            showTab("custom"); await T.wait(700); $('#cGroup button[data-v="1"]').click(); await T.wait(700);`);
+  check("switching custom groups leaves your lighting alone", (await js(`return (await api("/status")).effect`)) === "rainbow");
+  await js(`$('#cGroup button[data-v="0"]').click(); await T.wait(500); S.sel = new Set(["W"]); $("#cPaint").click(); await T.wait(700);`);
+  check("painting previews it on the keyboard", (await js(`return (await api("/status")).effect`)) === "solid");
+  await js(`$("#cDiscard").click(); await T.wait(900);`);
+  check("discarding the preview brings your lighting back", (await js(`return (await api("/status")).effect`)) === "rainbow"
+    && (await js(`return (await api("/settings")).last_live.effect`)) === "rainbow");
+
+  await js(`await api("/stop", {}); await api("/custom", { colors: { Q: "00ffff" }, colorset: 0 });
+            S.settings = await api("/settings", { custom_groups: [null, null, null], custom_active: 0 });
+            showTab("custom"); await T.wait(500); $('#cGroup button[data-v="0"]').click(); await T.wait(500);`);
+  await js(`$('#cGroup button[data-v="1"]').click(); await T.wait(500); S.brush = "ff0000"; $("#cFill").click(); await T.wait(300);
+            $("#cSave").click(); await T.wait(1200); $('#cGroup button[data-v="0"]').click(); await T.wait(700);`);
+  check("saving another group keeps group 1's layout", (await js(`return S.custom.Q`)) === "00ffff", await js(`return S.custom.Q`));
+
+  await js(`await api("/apps", { enabled: false, default: { effect: "rainbow", params: { speed: 0.12, brightness: 0.6 } }, rules: [] });
+            S.settings = await api("/settings"); initApps(); showTab("apps"); await T.wait(500);
+            $("#appsOn").checked = true; $("#appsOn").dispatchEvent(new Event("change")); await T.wait(900);`);
+  check("saving app profiles keeps the default's options",
+    JSON.stringify((await js(`return (await api("/settings")).apps.default`)).params) === '{"speed":0.12,"brightness":0.6}');
+  await js(`$("#appsOn").checked = false; $("#appsOn").dispatchEvent(new Event("change")); await T.wait(600);
+            await api("/stop", {}); $("#appsAdd").click(); const tr = $("#appsRows tr:last-child");
+            tr.querySelector("[data-k=match]").value = "notepad"; tr.querySelector("[data-k=effect]").value = "solid";
+            tr.querySelector("[data-k=params]").value = '{"colour": "ff0000"}';
+            $("#appsOn").checked = true; $("#appsOn").dispatchEvent(new Event("change")); await T.wait(900);`);
+  check("a refused save puts the App Profiles switch back", (await js(`return $("#appsOn").checked`)) === false
+    && (await js(`return (await api("/settings")).apps.enabled`)) === false);
+  await js(`$("#appsRows tr:last-child .x").click();`);
+
+  await js(`showTab("auto"); await T.wait(600); window.__slow["/automation"] = 400;
+            const el = $('[data-a="idle.after_min"]'); el.value = "7"; el.dispatchEvent(new Event("input")); await T.wait(450);
+            el.value = "75"; el.dispatchEvent(new Event("input")); await T.wait(1600); window.__slow = {};`);
+  check("typing while a setting is being saved is kept", (await js(`return $('[data-a="idle.after_min"]').value`)) === "75"
+    && (await js(`return (await api("/automation")).idle.after_min`)) === 75);
+
+  await js(`showTab("live"); await T.wait(300); setLayers([{ effect: "rainbow" }]); await runLayers(false); await T.wait(700);
+            $('.layer [data-act=del]').click(); await T.wait(900);`);
+  check("removing the last layer of a running stack stops it", (await js(`return (await api("/status")).effect`)) !== "layers"
+    && (await js(`return $("#lyStart").textContent`)) === "Start layers");
+
+  if (EXPECT_PAD) {
+    await js(`showTab("pad"); await T.wait(900); $('#padView [data-key="1"]').click(); await T.wait(100);
+              T.set("#padEdit [data-f=type]", "hotkey"); await T.wait(800);
+              $('#padView [data-key="0"]').click(); await T.wait(100);
+              const l = $("#padEdit [data-k=label]"); l.value = "Rainbow!"; l.dispatchEvent(new Event("input", {bubbles: true})); await T.wait(900);`);
+    const padNow = () => js(`return JSON.stringify({ family: S.pad.family, label: (await api("/pad")).configs[S.pad.family].keys[0].label,
+      err: $("#padErr").textContent })`);
+    check("a pad key still being set up doesn't stop the others being saved",
+      (await js(`return (await api("/pad")).configs[S.pad.family].keys[0].label`)) === "Rainbow!", await padNow());
+    await js(`window.__slow["/pad"] = 400; const l = $("#padEdit [data-k=label]"), type = v => { l.value = v; l.dispatchEvent(new Event("input", {bubbles: true})); };
+              type("Mi"); await T.wait(450); type("Mic"); await T.wait(1600); window.__slow = {};`);
+    check("typing a pad label while it saves is kept",
+      (await js(`return (await api("/pad")).configs[S.pad.family].keys[0].label`)) === "Mic", await padNow());
+  }
+  await js(`window.fetch = window.__f;`);
+  const refusedOnPurpose = /status of 400 \(Bad Request\) http:\/\/127\.0\.0\.1:\d+\/(profiles\/rename|apps)$/;  // (the checks above)
+  const jsErrors = errors.filter(e => !refusedOnPurpose.test(e));
+  check("no JavaScript errors", jsErrors.length === 0, jsErrors.slice(0, 5).join(" | "));
   ws.close();
 } catch (e) {
   failures++;
