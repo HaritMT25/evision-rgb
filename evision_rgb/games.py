@@ -147,9 +147,12 @@ def feed(game: str) -> GameFeed:
 
 
 def set_feed(game: str, f):
-    """Replace a game's shared feed (tests); returns the previous one."""
+    """Replace a game's shared feed (tests); returns the previous one. None means "no feed": putting None back
+    removes the feed, so the next feed() makes a fresh one (never hands out None)."""
     with _FEEDS_LOCK:
-        prev, _FEEDS[game] = _FEEDS.get(game), f
+        prev = _FEEDS.pop(game, None)
+        if f is not None:
+            _FEEDS[game] = f
         return prev
 
 

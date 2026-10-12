@@ -69,6 +69,15 @@ class Diagnostics(_ServerCase):
         user = os.path.basename(home)
         self.assertNotIn(user.lower(), text.lower(), "repr()'s doubled backslashes, a key, any case, forward slashes")
 
+    def test_home_folders_of_every_os_are_hidden_with_their_separators_kept(self):
+        from evision_rgb.server import _home_pattern, _scrub
+        for home, text, want in (("/home/runner", "/home/runner/somewhere", "~/somewhere"),  # the leading / is home's
+                                 ("C:\\Users\\me", "C:\\Users\\me\\AppData", "~\\AppData"),
+                                 ("\\\\server\\share\\me", "\\\\server\\share\\me\\f", "~\\f"),
+                                 ("C:\\Users\\me", "C:\\Users\\meg\\x", "C:\\Users\\meg\\x")):  # another user stays
+            self.assertEqual(_scrub(text, _home_pattern(home)), want, home)
+        self.assertIsNone(_home_pattern("/"))
+
     def test_asking_never_writes_to_the_keyboard(self):
         with self.kb.lock:
             before = len([p for p in self.kb.writes if len(p) > 3 and p[3] in (0x01, 0x06, 0x0B)])

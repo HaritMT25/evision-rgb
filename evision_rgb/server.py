@@ -93,8 +93,12 @@ EFFECT_NAMES = {"rainbow": "Rainbow wave", "reactive": "Reactive typing", "music
 
 def _home_pattern(home: str):
     """The home folder in any spelling: any letter case, / or \\ or the doubled \\\\ of a repr()."""
-    parts = [re.escape(p) for p in re.split(r"[\\/]+", home) if p]
-    return re.compile(r"[\\/]+".join(parts) + r"(?![\w.-])", re.I) if len(parts) > 1 else None
+    home = home.rstrip("\\/")
+    if not re.search(r"[\\/]", home):  # "", "/" or a bare name: nothing to hide
+        return None
+    parts = re.split(r"([\\/]+)", home)  # names and the separators between them (a leading / stays: /home/x)
+    pattern = "".join(r"[\\/]+" if i % 2 else re.escape(p) for i, p in enumerate(parts))
+    return re.compile(pattern + r"(?![\w.-])", re.I)
 
 
 def _scrub(v, home):
@@ -288,7 +292,10 @@ class Controller:
                         self.auto_base = True
                     elif not need and self.auto_base:
                         if eng.effect is not None and eng.effect.name == "emulate":  # never stop the user's effect
-                            eng.stop()
+                            if eng.overrides:  # live key colours set meanwhile stay (on black, as without the mirror)
+                                eng.run("solid", color="000000")
+                            else:
+                                eng.stop()
                         self.auto_base = False
             except Exception as e:  # keyboard unplugged etc.: keep trying
                 self._log_error("automation", e)
@@ -390,12 +397,24 @@ class Controller:
         self.auto_base = False
 
     def _pause_for_battery(self):
-        self.battery_paused = self._take_lighting()
+        if self.game_on:  # the game only borrowed the keys: YOUR lighting is what waits for the charger (a game
+            # still running then takes over again by itself)
+            self.events.add(f"game lighting paused on battery ({self.game_on})")
+            self.battery_paused, self.game_on, self.game_prev = self.game_prev, None, None
+            self.engine.stop()
+        else:
+            self.battery_paused = self._take_lighting()
         if self.battery_paused:
             self.events.add(f"battery saver paused {_lighting_name(self.battery_paused)}")
 
     def _resume_after_battery(self):
         p, self.battery_paused = self.battery_paused, None
+        eng = self.engine
+        if p and self.ext_on and eng.effect is not None and eng.effect.name == "openrgb":
+            # an OpenRGB program lights the keys now: it keeps them, and yours comes back when it leaves
+            if p.get("effect") != "openrgb":
+                self.ext_prev = p
+            return
         self._give_back(p)
         if p:
             self.events.add(f"battery saver resumed {_lighting_name(p)}")
@@ -460,6 +479,8 @@ class Controller:
         if not self.ext_on:
             self.ext_prev = prev
             self.events.add("an OpenRGB program took over the lighting")
+        elif prev is not None:  # lighting of yours was showing over the program: that is what comes back later
+            self.ext_prev = prev
         self.ext_on = True
         self.stop_apps()
         eng.run("openrgb")
@@ -512,6 +533,13 @@ class Controller:
             eng = self.engine
             mine = eng.effect is not None and eng.effect.name == "openrgb"
             prev, self.ext_on, self.ext_prev = self.ext_prev, False, None
+            if self._saving:  # on battery nothing of yours runs: it is what comes back with the charger
+                if mine:
+                    eng.stop()
+                if (self.battery_paused or {}).get("effect") == "openrgb":  # the program's frame was waiting
+                    self.battery_paused = prev
+                self.events.add("the OpenRGB program left (on battery)")
+                return
             self.events.add("the OpenRGB program left")
             if mine:
                 eng.stop()
@@ -674,6 +702,15 @@ class Controller:
         self.stop_apps()
         self.apps = AppProfiles(self.engine, cfg).start()
 
+    def _apps_off(self, persist: bool = True):
+        """Lighting you choose ends app profiles, and with persist (not for previews) they stay off: the App
+        Profiles switch shows it and the next start brings back your choice, not them. (The battery saver, games
+        and OpenRGB programs only pause them: stop_apps.)"""
+        self.stop_apps()
+        cfg = self.settings.get("apps") or {}
+        if persist and cfg.get("enabled"):
+            self.update_settings({"apps": {**cfg, "enabled": False}})
+
     # -- settings
     def update_settings(self, patch: dict) -> dict:
         if "fw_time_scale" in patch:
@@ -689,7 +726,7 @@ class Controller:
     def run_live(self, effect: str, params: dict | None = None, remember: bool = True) -> dict:
         if effect not in EFFECTS:
             raise ValueError(f"unknown effect {effect!r}; choose from {list(EFFECTS)}")
-        self.stop_apps()
+        self._apps_off(persist=remember)
         self._lighting_chosen()
         run_params = dict(params or {})
         if effect == "heatmap" and "counts" not in run_params:
@@ -701,7 +738,7 @@ class Controller:
         return st
 
     def stop_live(self) -> dict:
-        self.stop_apps()
+        self._apps_off()
         self._lighting_chosen()
         self.remember_live(None)
         self.active_profile = None
@@ -711,7 +748,7 @@ class Controller:
         """Store a built-in effect on the keyboard. A layer stack drawn on top of the stored effect keeps
         running on top of the new one; any other live effect ends (hardware effects only show then)."""
         self.kb.apply_fields(bytearray(CONFIG_LEN), **fields)  # validate before touching the stream
-        self.stop_apps()
+        self._apps_off()
         self._lighting_chosen()
         eng = self.engine
         keep = (eng.effect.name, dict(eng.params)) if (
@@ -749,7 +786,7 @@ class Controller:
         if p.get("custom") is not None and not hw:
             hw = {"mode": "custom"}  # a per-key layout on its own means "show these colours"
         live = p.get("live")
-        self.stop_apps()
+        self._apps_off()
         self._lighting_chosen()
         self.engine.pause()
         try:
@@ -1039,7 +1076,7 @@ def make_handler(ctl: Controller):
                     if p == "/effect":
                         return self._send(200, ctl.set_hardware(**req))
                     if p == "/custom":
-                        ctl.stop_apps()
+                        ctl._apps_off()
                         ctl._lighting_chosen()
                         engine.pause()  # the custom-key preview stays on screen while we store it
                         ctl.remember_live(None)
@@ -1069,6 +1106,8 @@ def make_handler(ctl: Controller):
                             return self._send(200, {"apps": "running", "rules": len(cfg.get("rules", []))})
                         ctl.stop_apps()
                         engine.stop()
+                        ctl.remember_live(None)  # off means the keyboard's own effect, now and at the next start
+                        ctl.active_profile = None
                         return self._send(200, {"apps": "stopped"})
                     if p == "/settings":
                         return self._send(200, ctl.update_settings(req))
@@ -1108,9 +1147,11 @@ def make_handler(ctl: Controller):
                         d = req.get("dir") or ctl.backup_dir
                         if not d or not os.path.isfile(os.path.join(d, "config.bin")):
                             raise ValueError("no lighting backup found")
-                        ctl.stop_apps()
+                        ctl._apps_off()
                         ctl._lighting_chosen()
                         engine.stop()
+                        ctl.remember_live(None)  # the restored lighting is what stays, also after a restart
+                        ctl.active_profile = None
                         for cs in range(3):
                             with open(os.path.join(d, f"custom{cs}.bin"), "rb") as f:
                                 ctl.kb.set_custom(f.read(), colorset=cs, activate=False)

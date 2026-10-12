@@ -258,6 +258,10 @@ try {
   for (const t of ["light", "live", "auto", "apps", "settings"]) await js(`showTab("${t}"); await T.wait(250);`);
   await js(`showTab("apps"); await T.wait(100); $("#appsAdd").click(); const tr = $("#appsRows tr:last-child"); const s = tr.querySelector("[data-k=effect]"); s.value = "layers"; s.dispatchEvent(new Event("change"));`);
   check("an app rule can use the layer stack", (await js(`return $("#appsRows tr:last-child [data-k=params]").value`)).includes('"layers"'));
+  await js(`await api("/apps", { enabled: true, rules: [], default: { effect: "rainbow", params: {} } }); showTab("apps"); await T.wait(500);`);
+  check("the App Profiles switch shows them running", await js(`return $("#appsOn").checked === true`));
+  await js(`showTab("live"); await api("/run", { effect: "solid", params: { color: "102030" } }); showTab("apps"); await T.wait(500);`);
+  check("picking other lighting elsewhere shows them off", await js(`return $("#appsOn").checked === false`));
   check("no JavaScript errors", errors.length === 0, errors.slice(0, 5).join(" | "));
   ws.close();
 } catch (e) {

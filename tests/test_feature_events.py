@@ -134,7 +134,7 @@ class EventsFromTheApp(_ServerCase):
         self.battery = True
         self.assertTrue(wait_for(lambda: logged(self, "brightness 3 -> 1")))
         self.battery = False
-        self.assertTrue(wait_for(lambda: logged(self, "brightness back to 3")))
+        self.assertTrue(wait_for(lambda: logged(self, "resumed rainbow")))  # the last of them (/events takes no lock)
         t = texts(self)
         order = [next(i for i, x in enumerate(t) if (x == part if part in ("on battery", "plugged in") else part in x))
                  for part in

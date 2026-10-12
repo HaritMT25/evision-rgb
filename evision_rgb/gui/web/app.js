@@ -1217,6 +1217,10 @@ function showTab(t) {
   if (t === "light") loadInfo().catch(() => { });
   if (t === "pad" && S.pad.st) padLoad().catch(() => { });
   if (t === "games") gamesLoad().catch(() => { });
+  if (t === "apps") api("/settings").then(s => {  // lighting chosen elsewhere (tray, pad, API) may have ended them
+    S.settings.apps = { ...(S.settings.apps || {}), enabled: !!(s.apps || {}).enabled };
+    $("#appsOn").checked = S.settings.apps.enabled;
+  }).catch(() => { });
 }
 // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) undo and redo in the custom-key painter and the layer editor
 document.addEventListener("keydown", e => {
