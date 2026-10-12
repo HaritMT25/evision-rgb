@@ -43,20 +43,25 @@ CAPS_SIG = bytes.fromhex("aa5500000d805000020000")
 
 
 def extract_from_updater(path: str) -> list[bytes]:
-    """Firmware images embedded in an official updater exe (resource type 'DOWNLOAD')."""
+    """Firmware images embedded in an official updater exe (resource type 'DOWNLOAD'). Only its resources are
+    parsed (all of it, with ~90 000 relocations, took ~2 s and a ~95 MB peak), and the file is closed again."""
     import pefile
-    pe = pefile.PE(path, fast_load=False)
-    out = []
-    for t in getattr(pe, "DIRECTORY_ENTRY_RESOURCE", type("x", (), {"entries": []})).entries:
-        if str(t.name) != "DOWNLOAD":
-            continue
-        for e in t.directory.entries:
-            for lang in e.directory.entries:
-                d = lang.data.struct
-                blob = pe.get_data(d.OffsetToData, d.Size)
-                if blob[APP_BASE:APP_BASE + 3][:1] == b"\x02" and CAPS_SIG in blob[APP_BASE:APP_BASE + 64]:
-                    out.append(blob)
-    return out
+    pe = pefile.PE(path, fast_load=True)
+    try:
+        pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"]])
+        out = []
+        for t in getattr(pe, "DIRECTORY_ENTRY_RESOURCE", type("x", (), {"entries": []})).entries:
+            if str(t.name) != "DOWNLOAD":
+                continue
+            for e in t.directory.entries:
+                for lang in e.directory.entries:
+                    d = lang.data.struct
+                    blob = pe.get_data(d.OffsetToData, d.Size)
+                    if blob[APP_BASE:APP_BASE + 3][:1] == b"\x02" and CAPS_SIG in blob[APP_BASE:APP_BASE + 64]:
+                        out.append(blob)
+        return out
+    finally:
+        pe.close()
 
 
 def find_firmware(caps: bytes | None = None, search: list[str] | None = None) -> bytes | None:

@@ -22,6 +22,9 @@
 - **Faster first start after an update**: the exact-effect engine compiled for your PC is kept for the next version
   (wherever you unzip it) unless the engine itself changed, instead of being compiled again (up to a minute of one
   CPU core). Its cache now lives with the app's settings in `%APPDATA%\EVisionRGB\numba-cache`.
+- **Lighter start**: the keyboard's firmware (for the exact preview) is taken from the AJAZZ updater without parsing
+  the rest of that program, which took about 2 s and a ~95 MB memory peak at every start; the updater is no longer
+  kept locked while the app runs.
 - **Security fixes**, from reading the code for problems: a web page could make the app read any amount of data
   into memory (it read a request's body before checking who sent it); now no request body over 1 MiB is read, and
   a refused request's body hardly at all. `POST /restore` restores only the app's own backup (it took any folder),

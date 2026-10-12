@@ -2,8 +2,8 @@
 Restores every file afterwards. Run from the project root:
 
     python scripts/mutation_check.py [text ...]   (only the mutants whose name contains one of the texts)
-A mutant may end with options: {"only": "win32" | "coarse-timers" | "numba"} (a bug that only exists there, or that
-only specs needing the optional numba can see), {"tests": [modules]}
+A mutant may end with options: {"only": "win32" | "coarse-timers" | "numba" | "pefile"} (a bug that only exists there,
+or that only specs needing that optional package can see), {"tests": [modules]}
 (the test modules likely to catch it run first; otherwise the ones that mention the mutated module do)."""
 import os, re, shutil, subprocess, sys
 
@@ -325,6 +325,15 @@ MUTANTS = {
     'jit cache: other packages\' functions are taken over too': ('evision_rgb/jit_cache.py',
         '        if not str(getattr(py_func, "__module__", "")).startswith("evision_rgb."):', '        if False:',
         {"only": "numba"}),
+    # -- the firmware image from the AJAZZ updater
+    'firmware lookup: the whole updater is parsed for one resource (~2 s, ~95 MB at every start)': (
+        'evision_rgb/firmware.py', '    pe = pefile.PE(path, fast_load=True)', '    pe = pefile.PE(path, fast_load=False)',
+        {"only": "pefile"}),
+    'firmware lookup: the resources are never read (no exact preview)': ('evision_rgb/firmware.py',
+        '        pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"]])\n',
+        '', {"only": "pefile"}),
+    'firmware lookup: the updater stays open (locked) after reading it': ('evision_rgb/firmware.py',
+        '    finally:\n        pe.close()', '    finally:\n        pass', {"only": "pefile"}),
     # -- hardening (a read-through for security problems, 2026-10-12)
     'hardening: a body of any size is read (a web page can fill the memory)': ('evision_rgb/server.py',
         'MAX_BODY = 1 << 20  #', 'MAX_BODY = 1 << 40  #'),
@@ -483,7 +492,7 @@ HINTS = {"still frames:": ["test_feature_battery"], "preview:": ["test_feature_b
          "battery dim:": ["test_feature_battery_dim"], "events:": ["test_feature_events"],
          "diagnostics:": ["test_feature_diagnostics"], "tray:": ["test_feature_tray"],
          "handoffs:": ["test_feature_handoffs"], "jit cache:": ["test_jit_cache"],
-         "hardening:": ["test_feature_hardening"],
+         "hardening:": ["test_feature_hardening"], "firmware lookup:": ["test_firmware_lookup"],
          "album:": ["test_feature_nowplaying"], "pad: the play key": ["test_feature_nowplaying"], "pad": ["test_feature_macropad"],
          "local API": ["test_feature_macropad"], "layers": ["test_feature_layers"], "profile": ["test_feature_layers"],
          "games:": ["test_feature_games"], "cs2:": ["test_feature_games"], "dota:": ["test_feature_games"],
@@ -505,12 +514,14 @@ def coarse_timers() -> bool:
     return sorted(waits)[3] > 0.025
 
 
-def has_numba() -> bool:
-    """Is numba (the "emulation" extra) installed for the suite's Python? Its specs are skipped without it."""
-    return subprocess.run([PY, "-c", "import numba"], capture_output=True).returncode == 0
+def has(module: str) -> bool:
+    """Is this optional package (numba, pefile: the "emulation" extra) installed for the suite's Python? Its specs
+    are skipped without it."""
+    return subprocess.run([PY, "-c", f"import {module}"], capture_output=True).returncode == 0
 
 
-ONLY = {"win32": lambda: sys.platform == "win32", "coarse-timers": coarse_timers, "numba": has_numba}
+ONLY = {"win32": lambda: sys.platform == "win32", "coarse-timers": coarse_timers, "numba": lambda: has("numba"),
+        "pefile": lambda: has("pefile")}
 
 
 def hint(name):
