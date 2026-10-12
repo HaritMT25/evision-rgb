@@ -2,7 +2,8 @@
 Restores every file afterwards. Run from the project root:
 
     python scripts/mutation_check.py [text ...]   (only the mutants whose name contains one of the texts)
-A mutant may end with options: {"only": "win32" | "coarse-timers"} (a bug that only exists there), {"tests": [modules]}
+A mutant may end with options: {"only": "win32" | "coarse-timers" | "numba"} (a bug that only exists there, or that
+only specs needing the optional numba can see), {"tests": [modules]}
 (the test modules likely to catch it run first; otherwise the ones that mention the mutated module do)."""
 import os, re, shutil, subprocess, sys
 
@@ -313,13 +314,17 @@ MUTANTS = {
     # -- packaged app: numba cache of the firmware engine
     'jit cache: stamped by the .exe, so every version compiles it again': ('evision_rgb/jit_cache.py',
         '        st = os.stat(self._py_file)\n        return _content_hash(self._py_file, st.st_mtime, st.st_size)',
-        '        st = os.stat(sys.executable)\n        return _content_hash(sys.executable, st.st_mtime, st.st_size)'),
+        '        st = os.stat(sys.executable)\n        return _content_hash(sys.executable, st.st_mtime, st.st_size)',
+        {"only": "numba"}),
     'jit cache: a changed engine runs the old compiled code': ('evision_rgb/jit_cache.py',
-        '        return _content_hash(self._py_file, st.st_mtime, st.st_size)', '        return b"always the same"'),
+        '        return _content_hash(self._py_file, st.st_mtime, st.st_size)', '        return b"always the same"',
+        {"only": "numba"}),
     'jit cache: numba is taken over outside the packaged app too': ('evision_rgb/jit_cache.py',
-        '        if not getattr(sys, "frozen", False) or not config.CACHE_DIR:', '        if not config.CACHE_DIR:'),
+        '        if not getattr(sys, "frozen", False) or not config.CACHE_DIR:', '        if not config.CACHE_DIR:',
+        {"only": "numba"}),
     'jit cache: other packages\' functions are taken over too': ('evision_rgb/jit_cache.py',
-        '        if not str(getattr(py_func, "__module__", "")).startswith("evision_rgb."):', '        if False:'),
+        '        if not str(getattr(py_func, "__module__", "")).startswith("evision_rgb."):', '        if False:',
+        {"only": "numba"}),
     # -- now playing / album colours
     'album: the cover is read on every poll (slow)': ('evision_rgb/media.py',
         '        if track != self._track:\n            self._track = track', '        if True:\n            self._track = track'),
@@ -470,7 +475,12 @@ def coarse_timers() -> bool:
     return sorted(waits)[3] > 0.025
 
 
-ONLY = {"win32": lambda: sys.platform == "win32", "coarse-timers": coarse_timers}
+def has_numba() -> bool:
+    """Is numba (the "emulation" extra) installed for the suite's Python? Its specs are skipped without it."""
+    return subprocess.run([PY, "-c", "import numba"], capture_output=True).returncode == 0
+
+
+ONLY = {"win32": lambda: sys.platform == "win32", "coarse-timers": coarse_timers, "numba": has_numba}
 
 
 def hint(name):

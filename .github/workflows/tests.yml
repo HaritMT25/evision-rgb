@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v6
         with: { python-version: "${{ matrix.python }}" }
       - name: Install
-        run: python -m pip install -e ".[mcp,pads,media]" openrgb-python==0.3.8
+        run: python -m pip install -e ".[mcp,pads,media,emulation]" openrgb-python==0.3.8
       - name: Behaviour + unit tests (firmware simulator, no keyboard needed)
         working-directory: tests
         run: python -m unittest -v

@@ -10,6 +10,7 @@ NUMBA_CACHE_LOCATOR_CLASSES) uses the copy of the engine's source that ships in 
 in the app's numba-cache folder: a new version reuses the compiled engine unless the engine itself changed.
 Outside the packaged app, and for other packages' functions, numba is left alone.
 """
+import importlib.util
 import os
 import subprocess
 import sys
@@ -17,6 +18,7 @@ import tempfile
 import unittest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+NUMBA = importlib.util.find_spec("numba") is not None  # the "emulation" extra (the desktop app always bundles it)
 MISSING_BUILD = r"Z:\no-such-build-machine\evision_rgb\fakeeng.py"  # built on GitHub: not on this PC
 # numba itself recompiles when a function's own bytecode changes; the stamp is what catches a change OUTSIDE it (a
 # module constant, an inlined helper: the firmware engine has many), so the engine's step lives in a constant
@@ -44,6 +46,7 @@ print("result", r, "hits", sum(mod.add1.stats.cache_hits.values()), "misses", su
 '''
 
 
+@unittest.skipUnless(NUMBA, "numba (the emulation extra) is not installed")
 class PackagedApp(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -107,6 +110,7 @@ class PackagedApp(unittest.TestCase):
         self.assertIn("result 3 hits 0 misses 1", out, "not the old compiled code")
 
 
+@unittest.skipUnless(NUMBA, "numba (the emulation extra) is not installed")
 class LeavesNumbaAlone(unittest.TestCase):
     def test_outside_the_packaged_app_and_for_other_packages_it_steps_aside(self):
         from numba.core import config
