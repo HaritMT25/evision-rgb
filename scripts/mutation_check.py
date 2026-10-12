@@ -400,6 +400,8 @@ MUTANTS = {
     'ui review: ending a preview brings nothing back': ('evision_rgb/server.py',
         '        else:\n            self._give_back(want)\n        return self.engine.status()',
         '        return self.engine.status()'),
+    'ui review: an unplugged keyboard is an automation error every minute in the events': ('evision_rgb/server.py',
+        '                if isinstance(e, (ProtocolError, OSError)) and not self.kb.dev.connected:', '                if False:'),
     'ui review: ending a preview on battery starts your lighting on battery': ('evision_rgb/server.py',
         '        if want and self._saving:\n            self.battery_paused = want\n        else:\n            self._give_back(want)',
         '        self._give_back(want)'),

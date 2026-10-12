@@ -17,6 +17,8 @@
     profile* follow it); removing the last layer of a running stack stops it.
   - A pad key whose action is still being set up no longer stops the other keys being saved, and typing in the
     automation or pad fields while a change saves is no longer lost.
+- **Recent events**: an unplugged keyboard is the one "keyboard disconnected" event, not also an automation error
+  every minute until it is back.
 
 ## 0.7.0 (2026-10-12)
 - **Dim the keyboard on battery** (Automation, off by default): the battery saver can also store a lower brightness

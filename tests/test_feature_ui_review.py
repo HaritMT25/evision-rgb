@@ -7,7 +7,11 @@ the fixes. (The window's side is checked by scripts/ui_smoke.mjs against the sim
 2. Renaming a profile could give two profiles the same name (the second one could then never be applied), and the
    pad keys and knobs that applied it kept the old name and failed. POST /profiles/rename refuses duplicates and
    renames them too.
+3. (Seen in the user's Recent events) while the keyboard was unplugged, an indicator, a timer or dimming that wanted
+   the keys logged "error in automation: keyboard disconnected" again and again, burying the events that matter.
+   "keyboard disconnected" says it once; the automation just waits for the keyboard.
 """
+import time
 import unittest
 
 from test_feature_battery import _ServerCase, wait_for
@@ -85,6 +89,21 @@ class RenamingAProfile(_ServerCase):
         self.call("/profiles/apply", {"name": "Gaming"})
         self.call("/profiles/rename", {"name": "Gaming", "to": "Gaming night"})
         self.assertEqual(self.ctl.active_profile, "Gaming night")
+
+
+class AnUnpluggedKeyboard(_ServerCase):
+    def texts(self):
+        return [e["text"] for e in self.ctl.events.recent()]
+
+    def test_is_one_event_not_an_error_a_minute(self):
+        self.kb.unplug()
+        self.call("/info")  # (the window asks: that is how the app finds it gone)
+        self.assertTrue(wait_for(lambda: "keyboard disconnected" in self.texts(), secs=3), self.texts())
+        self.caps = True  # an indicator wants the keys meanwhile
+        time.sleep(1.5)
+        self.assertEqual([t for t in self.texts() if t.startswith("error in automation")], [], self.texts())
+        self.kb.replug()
+        self.assertTrue(wait_for(lambda: self.effect() == "emulate", secs=4), "and the indicator shows once it is back")
 
 
 if __name__ == "__main__":

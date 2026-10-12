@@ -65,7 +65,7 @@ from .effects import EFFECTS, GAMMA, Engine, NAMES
 from . import __version__
 from .keyboard import CONFIG_LEN, Keyboard, frame_from
 from .layout import KEYS
-from .protocol import CMD_WRITE_CONFIG, MODES
+from .protocol import CMD_WRITE_CONFIG, MODES, ProtocolError
 
 DEFAULT_PORT = 8820
 MAX_BODY = 1 << 20  # largest request body read (a profile, the biggest real request, is at most 256 KB)
@@ -321,6 +321,8 @@ class Controller:
                                 eng.stop()
                         self.auto_base = False
             except Exception as e:  # keyboard unplugged etc.: keep trying
+                if isinstance(e, (ProtocolError, OSError)) and not self.kb.dev.connected:
+                    continue  # (away: "keyboard disconnected" is in the events once, not an error every minute)
                 self._log_error("automation", e)
 
     # -- battery saver: on battery the PC stops drawing and the keyboard shows its own effect
