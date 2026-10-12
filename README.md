@@ -61,6 +61,9 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
   documented display and keep-alive commands; boot-logo and config writes are refused. The local API answers only
   programs on this PC, so web pages cannot drive it.
 - The app backs up the keyboard's lighting the first time it connects, and can restore it any time.
+- **Recent events and diagnostics**: Other Settings lists what happened with times (the keyboard disconnecting,
+  battery and mains, what the battery saver did, errors) and copies a diagnostics block for bug reports, with
+  secrets hidden.
 
 ## Screenshots
 | | |
@@ -115,7 +118,7 @@ with Keyboard() as kb:
 ```
 
 ## HTTP API & MCP
-`GET /status /info /keys /effects /modes /frame /stream /custom /settings /profiles /profiles/export` ·
+`GET /status /info /keys /effects /modes /frame /stream /custom /settings /profiles /profiles/export /events /diagnostics` ·
 `POST /effect /custom /run /keys /clear /stop /apps /notify /timer /automation /heatmap /profiles/import /profiles/apply /restore`.
 `GET|POST /openrgb {"enabled": true, "port": 6742}` runs the OpenRGB SDK server. Game lighting: the game posts to `POST /game/cs2` / `/game/dota2` (with the token from its config file);
 `GET /games` shows what is installed and set up, `POST /games/setup {"game": "cs2"}` / `/games/remove` write or delete
@@ -136,7 +139,7 @@ Layers are listed bottom first. `keys` sets where a layer shows (every key by de
 MCP (Claude Code): `claude mcp add evision-rgb -- <venv>\Scripts\python.exe -m evision_rgb.mcp_server`
 gives the tools `keyboard_status, list_keys, list_effects, set_hardware_effect, set_custom_colors, run_live_effect,
 set_live_keys, clear_live_keys, stop_live, notify, start_timer, cancel_timer, list_profiles, apply_profile,
-export_profile, import_profile, pad_status, set_pad_key, now_playing, game_lighting`.
+export_profile, import_profile, pad_status, set_pad_key, now_playing, game_lighting, recent_events`.
 
 ## Tests
 Behaviour specs run against a **firmware simulator** (`tests/fake_device.py`) that models the observed firmware

@@ -26,6 +26,8 @@ POST /game/cs2 | /game/dota2                  the game's own state (Valve Game S
 GET  /games    POST /games {"auto": true}     game lighting status / switch on automatically while you play
 POST /games/setup {"game": "cs2"} | /games/remove {"game": "cs2"}   write / delete our config file in the game
 GET|POST /openrgb {"enabled": true, "port": 6742}   OpenRGB SDK server (Artemis, SignalRGB bridge, Home Assistant)
+GET  /diagnostics                             for bug reports: versions, keyboard, state, settings, events (no secrets)
+GET  /events                                  recent events, newest last (keyboard / power / battery saver / errors)
 GET  /pad | /pad/key.png?model=akp03&i=0      macro pad state, configs, supported models / a key image
 POST /pad {"model": "akp03", "brightness": 80, "keys": [...], "knobs": [...]}   POST /pad/key {"model", "index", "key"}
 POST /pad/press {"model": "akp03", "key": 0} | {"knob": 1, "move": "left|right|press"}   run what it is set to
@@ -55,6 +57,7 @@ from . import games  # registers 'cs2' and 'dota2' (game lighting)
 from . import openrgb  # registers 'openrgb' (colours from OpenRGB clients)
 from . import scenes  # registers 'fire', 'ocean', 'twinkle', 'matrix'
 from . import profiles
+from .events import EventLog
 from .effects import EFFECTS, GAMMA, Engine, NAMES
 from . import __version__
 from .keyboard import CONFIG_LEN, Keyboard
@@ -70,7 +73,22 @@ BACKUP_FILES = ("config.bin", "custom0.bin", "custom1.bin", "custom2.bin", "keym
 MODE_NAME = {i: n for n, i in MODES.items()}
 _STREAMS = {"open": 0}
 _STREAMS_LOCK = threading.Lock()
-_UNSET = object()  # "not yet": the first battery tick also restores a dim left over from before a restart
+_UNSET = object()
+
+
+def _lighting_name(p: dict) -> str:
+    return "app profiles" if "apps" in p else p["effect"]
+
+
+def _scrub(v, home: str):
+    """A copy that is safe to paste publicly: anything called a token hidden, the home folder shown as ~."""
+    if isinstance(v, dict):
+        return {k: "(hidden)" if "token" in str(k).lower() and v[k] else _scrub(x, home) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_scrub(x, home) for x in v]
+    if isinstance(v, str) and len(home) > 3:
+        return v.replace(home, "~").replace(home.replace("\\", "/"), "~")
+    return v  # "not yet": the first battery tick also restores a dim left over from before a restart
 
 
 def open_streams() -> int:
@@ -122,6 +140,7 @@ class Controller:
         self.lock = threading.RLock()
         self.apps = None
         self.settings = settings_mod.load()
+        self.events = EventLog(os.path.join(settings_mod.DIR, "events.log"))
         from .automation import Automation
         self.automation = Automation(self.settings.get("automation"), probes)
         emulate.set_time_scale(self.settings.get("fw_time_scale", 1.0))
@@ -161,7 +180,25 @@ class Controller:
         cfg = self.settings.get("openrgb") or {}
         if cfg.get("enabled"):
             self.openrgb.start(int(cfg.get("port", 6742)))
+        self._log_start()
         threading.Thread(target=self._automation_loop, daemon=True).start()
+
+    def _log_start(self):
+        self._kb_seen = self._kb_ever = bool(self.kb.dev.connected)
+        try:
+            self._power_seen = self.automation.probes["on_battery"]()
+        except Exception:  # noqa: BLE001 - the loop logs a broken probe
+            self._power_seen = None
+        power = {True: "on battery", False: "plugged in"}.get(self._power_seen, "no battery")
+        self.events.add(f"app started ({__version__}): keyboard {'connected' if self._kb_seen else 'not connected'}, {power}")
+
+    def _watch_keyboard(self):
+        c = bool(self.kb.dev.connected)
+        if c != self._kb_seen:
+            self._kb_seen = c
+            self.events.add("keyboard disconnected" if not c else "keyboard connected again" if self._kb_ever
+                            else "keyboard connected")
+            self._kb_ever = self._kb_ever or c
 
     def start_pads(self):
         self.pads.start()
@@ -215,6 +252,7 @@ class Controller:
         while not self._auto_stop.wait(1.0 / self._auto_hz):
             try:
                 self._first_contact()
+                self._watch_keyboard()
                 self._battery_tick()
                 self._games_tick()
                 need = self.automation.active()
@@ -228,7 +266,7 @@ class Controller:
                             eng.stop()
                         self.auto_base = False
             except Exception as e:  # keyboard unplugged etc.: keep trying
-                print("automation:", repr(e))
+                self.events.error("automation", e)
 
     # -- battery saver: on battery the PC stops drawing and the keyboard shows its own effect
     def _battery_saving(self) -> bool:
@@ -237,6 +275,10 @@ class Controller:
 
     def _battery_tick(self):
         saving = self._battery_saving()
+        if self._on_battery in (True, False) and self._on_battery != self._power_seen:
+            self.events.add("on battery" if self._on_battery else "plugged in")
+        if self._on_battery in (True, False):
+            self._power_seen = self._on_battery
         with self.lock:
             if saving and not self._saving:
                 self._saving = True
@@ -264,6 +306,8 @@ class Controller:
             target, new = (want, {"from": back, "to": want}) if want is not None and back > want else (back, None)
             if target != cur:
                 self._store_brightness(target)
+                self.events.add(f"keyboard brightness {cur} -> {target} on battery" if new
+                                else f"keyboard brightness back to {target}")
         except Exception:  # noqa: BLE001 - keyboard unplugged: tried again on the next tick
             return
         self._dim_for = want
@@ -311,10 +355,14 @@ class Controller:
 
     def _pause_for_battery(self):
         self.battery_paused = self._take_lighting()
+        if self.battery_paused:
+            self.events.add(f"battery saver paused {_lighting_name(self.battery_paused)}")
 
     def _resume_after_battery(self):
         p, self.battery_paused = self.battery_paused, None
         self._give_back(p)
+        if p:
+            self.events.add(f"battery saver resumed {_lighting_name(p)}")
 
     def _lighting_chosen(self):
         """The user picked the lighting: nothing the battery saver, a game or an OpenRGB client paused comes back
@@ -375,6 +423,7 @@ class Controller:
             prev = self._take_lighting()
         if not self.ext_on:
             self.ext_prev = prev
+            self.events.add("an OpenRGB program took over the lighting")
         self.ext_on = True
         self.stop_apps()
         eng.run("openrgb")
@@ -427,6 +476,7 @@ class Controller:
             eng = self.engine
             mine = eng.effect is not None and eng.effect.name == "openrgb"
             prev, self.ext_on, self.ext_prev = self.ext_prev, False, None
+            self.events.add("the OpenRGB program left")
             if mine:
                 eng.stop()
                 self._give_back(prev)
@@ -450,6 +500,7 @@ class Controller:
                 if self.game_on:
                     eng = self.engine
                     mine = eng.effect is not None and eng.effect.name == self.game_on
+                    self.events.add(f"game lighting ended ({self.game_on})")
                     prev, self.game_on, self.game_prev = self.game_prev, None, None
                     if mine:
                         eng.stop()
@@ -461,6 +512,7 @@ class Controller:
                 self.game_prev = self._take_lighting()
             self.stop_apps()
             self.engine.run(playing)
+            self.events.add(f"game lighting took over ({playing})")
             self.game_on, self.auto_base = playing, False
 
     def game_post(self, game: str, state) -> None:
@@ -503,6 +555,22 @@ class Controller:
                 "paused": None if not p else "app profiles" if "apps" in p else p["effect"],
                 "brightness": self.automation.cfg["battery"]["brightness"],
                 "dimmed": self.settings.get("battery_dimmed")}
+
+    def diagnostics(self) -> dict:
+        """What a bug report needs in one document, safe to paste publicly. Only reads the keyboard's state."""
+        import platform
+        kb = {}
+        try:
+            kb["info"] = self.kb.info()
+        except Exception as e:  # noqa: BLE001 - unplugged: say so
+            kb["error"] = repr(e)
+        kb["connected"] = bool(self.kb.dev.connected)
+        doc = {"app": {"version": __version__, "python": sys.version.split()[0], "platform": platform.platform(),
+                       "frozen": bool(getattr(sys, "frozen", False))},
+               "keyboard": kb, "status": self.engine.status(), "battery": self.battery_status(),
+               "game_on": self.game_on, "openrgb": self.openrgb_status(), "firmware": emulate.firmware_status(),
+               "automation": self.automation.cfg, "settings": self.settings, "events": self.events.recent()}
+        return _scrub(doc, os.path.expanduser("~"))
 
     def _sync_key_hook(self):
         """Global key hook only while the heatmap is counting."""
@@ -663,7 +731,7 @@ class Controller:
             elif want:
                 self.engine.run(want["effect"], **want["params"])
         except Exception as e:  # never block start-up on a bad saved setting
-            print("startup action failed:", repr(e))
+            self.events.error("start-up", e)
 
     # -- preview of what the keyboard shows
     def frame(self) -> dict:
@@ -826,6 +894,10 @@ def make_handler(ctl: Controller):
                         return self._send(200, ctl.automation.cfg)
                     if u.path == "/openrgb":
                         return self._send(200, ctl.openrgb_status())
+                    if u.path == "/diagnostics":
+                        return self._send(200, ctl.diagnostics())
+                    if u.path == "/events":
+                        return self._send(200, {"events": ctl.events.recent()})
                     if u.path == "/firmware":
                         return self._send(200, emulate.firmware_status())
                     if u.path == "/profiles":

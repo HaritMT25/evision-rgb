@@ -273,7 +273,12 @@
             <div class="field"><label>When the app starts</label>
               <div class="seg" id="sStartup"><button data-v="none">Do nothing</button><button data-v="restore">Resume last live effect</button><button data-v="apps">Run app profiles</button></div></div>
             <h2 style="margin-top:18px">Maintenance</h2>
-            <div class="row"><button class="btn" id="sRestore">Restore lighting from before first use</button></div>
+            <div class="row"><button class="btn" id="sRestore">Restore lighting from before first use</button>
+              <button class="btn" id="sDiag" title="Versions, keyboard state, settings and recent events for a bug report (no secrets)">Copy diagnostics</button></div>
+            <h2 style="margin-top:18px">Recent events</h2>
+            <div class="events" id="events"></div>
+            <p class="hint">The keyboard disconnecting, battery and mains, what the battery saver did, errors. The full
+              list is in events.log in %APPDATA%\EVisionRGB.</p>
           </div>
           <div>
             <h2>Device</h2>

@@ -226,6 +226,12 @@ try {
     await js(`return $("#orgbState").textContent`));
   await js(`$("#orgbOn").checked = false; $("#orgbOn").dispatchEvent(new Event("change")); await T.wait(900);`);
   check("and off again", (await js(`return $("#orgbState").textContent`)) === "Off.");
+  check("recent events are listed, newest first", /app started/.test(await js(`await eventsLoad(); return $("#events").textContent`)),
+    await js(`return $("#events").textContent.slice(0, 200)`));
+  await js(`$("#sDiag").click(); await T.wait(800);`);
+  check("Copy diagnostics shows the report", /"version"/.test(await js(`return ($("#mBody textarea") || {}).value || ""`)));
+  await js(`T.modalButton("Close"); await T.wait(300); $("#events").scrollIntoView();`);
+  await shot("settings-events");
 
   // ---- battery saver & still pictures
   await js(`showTab("auto"); await T.wait(1300);`);

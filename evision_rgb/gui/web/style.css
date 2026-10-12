@@ -191,6 +191,8 @@ td input[type=text], td select, .inp { width: 100%; background: #2c2c31; border:
 .warnbox b { color: var(--warn); }
 .kv { display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px; font-size: 13px; }
 .kv div:nth-child(odd) { color: var(--muted); }
+.events { max-height: 190px; overflow-y: auto; font-size: 12.5px; line-height: 1.55; }
+.events time { color: var(--muted); margin-right: 8px; font-variant-numeric: tabular-nums; }
 
 /* macro pad */
 .pill2 { padding: 2px 10px; border-radius: 99px; font-size: 12px; background: #2a2a2f; color: var(--muted); border: 1px solid #3a3a40; }

@@ -66,7 +66,7 @@ class DimOnBattery(_ServerCase):
         self.assertTrue(wait_for(lambda: brightness(self.kb) == 1))
         self.battery = False
         self.assertTrue(wait_for(lambda: brightness(self.kb) == ORIGINAL))
-        self.assertIsNone(self.ctl.settings.get("battery_dimmed"))
+        self.assertTrue(wait_for(lambda: self.ctl.settings.get("battery_dimmed") is None))
 
     def test_one_write_per_power_change(self):
         self.dim(0)
@@ -200,7 +200,7 @@ class DimRememberedAcrossRestarts(_ServerCase):
 
     def test_starting_plugged_in_restores_the_brightness(self):
         self.assertTrue(wait_for(lambda: brightness(self.kb) == 4))
-        self.assertIsNone(self.ctl.settings.get("battery_dimmed"))
+        self.assertTrue(wait_for(lambda: self.ctl.settings.get("battery_dimmed") is None))
 
 
 class DimRememberedOnBattery(_ServerCase):

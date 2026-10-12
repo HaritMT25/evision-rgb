@@ -5,6 +5,12 @@
   on the keyboard while the laptop runs on battery, since its lights are powered by the laptop's USB port. Plugging
   in brings the old brightness back, unless you changed it meanwhile; this works across a restart too, and for a
   keyboard that was unplugged at the time. `POST /automation {"battery": {"brightness": 1}}` (0..4, null = leave it).
+- **Recent events** (Other Settings, `GET /events`, MCP tool `recent_events`, `events.log`): the keyboard
+  disconnecting and coming back, battery and mains, what the battery saver paused, dimmed and gave back, game lighting
+  and OpenRGB programs taking over, and background errors (each one once a minute), with times. Before, those errors
+  went nowhere in the desktop app.
+- **Copy diagnostics** (Other Settings, `GET /diagnostics`): versions, the keyboard's state, what is running, the
+  settings and the recent events in one block for a bug report, with tokens hidden and your home folder shown as ~.
 
 ## 0.6.0 (2026-10-11)
 - New live effects after FastLED's classic examples (MIT): **Fire** (a flame in every column, after Fire2012),

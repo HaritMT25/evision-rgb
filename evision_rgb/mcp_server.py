@@ -66,6 +66,13 @@ def keyboard_status() -> dict:
 
 
 @mcp.tool()
+def recent_events() -> dict:
+    """What happened lately, with times, newest last: the keyboard disconnecting / reconnecting, the laptop going
+    on battery / plugged in, what the battery saver paused or dimmed, game lighting / OpenRGB taking over, errors."""
+    return call("/events")
+
+
+@mcp.tool()
 def list_keys() -> dict:
     """Key names usable in other tools, with physical x,y positions (0..1, origin top-left)."""
     return call("/keys")

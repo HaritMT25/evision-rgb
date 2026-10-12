@@ -847,6 +847,16 @@ async function orgbLoad() {
   $("#orgbState").textContent = s.error ? s.error : !s.enabled ? "Off."
     : `Listening on 127.0.0.1:${s.port} · ` + (s.clients.length ? `connected: ${s.clients.join(", ")}` : "no program connected yet");
 }
+// recent events (Other Settings): newest first
+async function eventsLoad() {
+  const r = await api("/events");
+  $("#events").innerHTML = r.events.length ? r.events.slice(-30).reverse()
+    .map(e => `<div><time>${esc(e.time.slice(5, 16))}</time>${esc(e.text)}</div>`).join("") : '<span class="hint">Nothing yet.</span>';
+}
+function initEvents() {
+  eventsLoad().catch(() => { });
+  setInterval(() => { if (S.tab === "settings" && !document.hidden) eventsLoad().catch(() => { }); }, 3000);
+}
 function initOpenRGB() {
   const save = () => safe(async () => {
     await api("/openrgb", { enabled: $("#orgbOn").checked, port: Math.max(1, Math.min(65535, +$("#orgbPort").value || 6742)) });
@@ -874,6 +884,15 @@ async function initSettings() {
       [["Cancel", false], ["Restore", true, "primary"]]))) return;
     await safe(() => api("/restore", {}), "Restored"); await loadInfo(); S.lastFrameAt = 0;
   };
+  $("#sDiag").onclick = () => safe(copyDiagnostics);
+}
+async function copyDiagnostics() {
+  const text = JSON.stringify(await api("/diagnostics"), null, 1);
+  let copied = false;
+  try { await navigator.clipboard.writeText(text); copied = true; } catch (e) { }
+  await modal("Diagnostics", `<p class="hint" style="margin-top:0">${copied ? "Copied to the clipboard. " : ""}Paste it into a bug
+    report. Tokens are hidden and your home folder shows as ~.</p>
+    <textarea class="inp code" rows="10" readonly>${esc(text)}</textarea>`, [["Close", null, "primary"]]);
 }
 function renderDevInfo() {
   const i = S.info || {};
@@ -1212,7 +1231,7 @@ document.addEventListener("keydown", e => {
 });
 async function boot() {
   [S.layout, S.modes, S.settings] = await Promise.all([fetch("ui/layout.json").then(r => r.json()), api("/modes"), api("/settings")]);
-  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); initPad(); initGames(); initOpenRGB(); await initAutomation();
+  buildBoard(); initLight(); initCustom(); initLive(); initLayers(); initApps(); initProfiles(); initPad(); initGames(); initOpenRGB(); initEvents(); await initAutomation();
   await initSettings();
   $$("#nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#conflictPill").onclick = () => showTab("settings");
