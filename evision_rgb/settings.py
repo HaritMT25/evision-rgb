@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import time
 
 _BASE = os.environ.get("APPDATA", os.path.expanduser("~"))
 DIR = os.path.join(_BASE, "EVisionRGB")
@@ -34,16 +35,39 @@ DEFAULTS = {
 }
 
 
+problem: str | None = None  # why the last load() could not use the settings file (the app's event log says so)
+
+
 def load() -> dict:
+    """The settings: the file's over the defaults. A file that can't be read (cut short, not JSON) is moved aside
+    to settings.json.bad-<time> first, so the next save can't overwrite what is in it; `problem` says so."""
+    global problem
+    problem = None
     s = copy.deepcopy(DEFAULTS)
     path = PATH
     if not os.path.exists(path) and os.path.exists(os.path.join(OLD_DIR, "settings.json")):
         path = os.path.join(OLD_DIR, "settings.json")  # migrate settings from the old app name
     try:
-        with open(path, encoding="utf-8") as f:
-            s.update(json.load(f))
-    except (OSError, ValueError):
-        pass
+        with open(path, encoding="utf-8-sig") as f:  # (-sig: Notepad's "UTF-8 with BOM" too)
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+    except OSError:
+        return s
+    except ValueError as e:
+        if path == PATH:
+            kept = stamp = f"{PATH}.bad-{time.strftime('%Y%m%d-%H%M%S')}"
+            n = 1
+            while os.path.exists(kept):  # never over an earlier copy
+                n += 1
+                kept = f"{stamp}-{n}"
+            try:
+                os.replace(PATH, kept)
+                problem = f"the settings file could not be read ({e}): kept as {os.path.basename(kept)}, defaults used"
+            except OSError:
+                problem = f"the settings file could not be read ({e}): defaults used"
+        return s
+    s.update(data)
     return s
 
 

@@ -59,6 +59,12 @@ def combo(mods) -> str:
     return "+".join(m for m in ORDER if m in mods)
 
 
+def _same(written: str, c: str) -> bool:
+    """A combo as written in a table ("shift+alt", "Ctrl + Shift") is the same as `c` in the fixed order."""
+    mods = {m.strip() for m in str(written).lower().split("+")}
+    return mods <= set(ORDER) and combo(mods) == c
+
+
 def hints(app: str, mods, custom: dict | None = None) -> dict[str, str]:
     """Keys that do something with exactly these modifiers held, mapped to a category."""
     c = combo(mods)
@@ -69,7 +75,9 @@ def hints(app: str, mods, custom: dict | None = None) -> dict[str, str]:
     custom = {k.lower(): v for k, v in (custom or {}).items()}
     table = APPS.get(app, {})
     for source in (GLOBAL, table, custom.get(app, {}), custom.get("*", {})):  # app entries extend the global ones
-        for cat, keys in source.get(c, {}).items():
-            for k in keys:
-                out[k] = cat
+        for written, cats in source.items():
+            if _same(written, c):
+                for cat, keys in cats.items():
+                    for k in keys:
+                        out[k] = cat
     return out

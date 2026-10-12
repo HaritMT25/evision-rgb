@@ -163,12 +163,20 @@ class Keyboard:
         return cfg
 
     # ---- persistent per-key colours ---------------------------------------
+    @staticmethod
+    def check_colorset(colorset) -> int:
+        """One of the three custom colour areas (past them is the keyboard's program memory); raises ValueError."""
+        if isinstance(colorset, bool) or not isinstance(colorset, int) or not 0 <= colorset < COLORSETS:
+            raise ValueError(f"colorset 0..{COLORSETS - 1}")
+        return colorset
+
     def set_custom(self, colors: Mapping[str | int, object] | bytes, default=(0, 0, 0),
                    colorset: int = 0, activate: bool = True):
         """Store per-key colours on the keyboard and (activate=True) show them in custom mode.
 
         With activate=True the colours always go to area 0 (the only one the firmware displays);
         a non-zero `colorset` additionally mirrors them into that storage area."""
+        self.check_colorset(colorset)
         frame = bytes(colors) if isinstance(colors, (bytes, bytearray)) else bytes(frame_from(colors, default))
         if len(frame) != 3 * MAP_SIZE:
             raise ValueError("frame must be 384 bytes")
@@ -181,7 +189,7 @@ class Keyboard:
             self._write_custom(frame, colorset)
 
     def get_custom(self, colorset: int = 0) -> dict[str, str]:
-        raw = self.dev.read_custom(colorset)
+        raw = self.dev.read_custom(self.check_colorset(colorset))
         return {k: raw[s * 3:s * 3 + 3].hex() for k, (s, _, _) in KEYS.items()}
 
     # ---- live streaming ----------------------------------------------------

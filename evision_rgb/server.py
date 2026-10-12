@@ -62,7 +62,7 @@ from . import profiles
 from .events import EventLog
 from .effects import EFFECTS, GAMMA, Engine, NAMES
 from . import __version__
-from .keyboard import CONFIG_LEN, Keyboard
+from .keyboard import CONFIG_LEN, Keyboard, frame_from
 from .layout import KEYS
 from .protocol import CMD_WRITE_CONFIG, MODES
 
@@ -167,6 +167,8 @@ class Controller:
         self.apps = None
         self.settings = settings_mod.load()
         self.events = EventLog(os.path.join(settings_mod.DIR, "events.log"))
+        if settings_mod.problem:
+            self.events.add(settings_mod.problem)
         from .automation import Automation
         self.automation = Automation(self.settings.get("automation"), probes)
         emulate.set_time_scale(self.settings.get("fw_time_scale", 1.0))
@@ -296,7 +298,7 @@ class Controller:
                     elif not need and self.auto_base:
                         if eng.effect is not None and eng.effect.name == "emulate":  # never stop the user's effect
                             if eng.overrides:  # live key colours set meanwhile stay (on black, as without the mirror)
-                                eng.run("solid", color="000000")
+                                eng.run_under_keys()
                             else:
                                 eng.stop()
                         self.auto_base = False
@@ -706,7 +708,8 @@ class Controller:
     def start_apps(self, cfg: dict):
         from .apps import AppProfiles
         self.stop_apps()
-        self.apps = AppProfiles(self.engine, cfg).start()
+        self.apps = AppProfiles(self.engine, cfg, on_error=lambda app, e: self._log_error(f"app profiles ({app})", e))
+        self.apps.start()
 
     def _apps_off(self, persist: bool = True):
         """Lighting you choose ends app profiles, and with persist (not for previews) they stay off: the App
@@ -1115,14 +1118,15 @@ def make_handler(ctl: Controller):
                     if p == "/effect":
                         return self._send(200, ctl.set_hardware(**req))
                     if p == "/custom":
+                        frame = bytes(frame_from(req.get("colors", {}), req.get("default", "000000")))
+                        colorset = Keyboard.check_colorset(req.get("colorset", 0))  # (refused: nothing changes)
                         ctl._apps_off()
                         ctl._lighting_chosen()
                         engine.pause()  # the custom-key preview stays on screen while we store it
                         ctl.remember_live(None)
                         ctl.active_profile = None
                         try:
-                            ctl.kb.set_custom(req.get("colors", {}), req.get("default", "000000"),
-                                              req.get("colorset", 0), req.get("activate", True))
+                            ctl.kb.set_custom(frame, colorset=colorset, activate=req.get("activate", True))
                         finally:
                             engine.stop()
                         return self._send(200, ctl.kb.info())
@@ -1137,7 +1141,8 @@ def make_handler(ctl: Controller):
                     if p == "/stop":
                         return self._send(200, ctl.stop_live())
                     if p == "/apps":
-                        cfg = {**ctl.settings.get("apps", {}), **req}
+                        from .apps import check
+                        cfg = check({**ctl.settings.get("apps", {}), **req})  # (refused: nothing saved or changed)
                         ctl.update_settings({"apps": cfg})
                         ctl._lighting_chosen()
                         if cfg.get("enabled", True):

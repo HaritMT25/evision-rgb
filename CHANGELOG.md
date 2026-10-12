@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (2026-10-11)
+## 0.7.0 (2026-10-12)
 - **Dim the keyboard on battery** (Automation, off by default): the battery saver can also store a lower brightness
   on the keyboard while the laptop runs on battery, since its lights are powered by the laptop's USB port. Plugging
   in brings the old brightness back, unless you changed it meanwhile; this works across a restart too, and for a
@@ -34,6 +34,20 @@
 - **OpenRGB programs** that change a built-in effect step by step (a slider) no longer store it on the keyboard at
   every step: the keyboard keeps every change in its flash memory, so a change is stored once the changes rest for
   0.3 s, and about once a second while they go on.
+- **Fix: the keyboard is only asked for the memory the official app uses.** `evrgb custom --colorset 3` (the window
+  numbers the groups 1 to 3), or the same through the API, wrote past the three custom colour areas into the
+  keyboard's program memory. Now it is refused before anything is sent, and the driver refuses any command outside
+  the ranges the official app uses.
+- **A settings file the app can't read is kept**: one saved by Notepad as "UTF-8 with BOM" is read as it is, and a
+  damaged one is kept as `settings.json.bad-<date>` (Recent events says so) instead of being replaced at the next
+  save, with your profiles, pad set-up and app rules gone.
+- **More fixes from a second review**: starting before the keyboard is plugged in no longer leaves it black when the
+  app restores a layer stack over the keyboard's own effect; the macro pad's brightness knob only changes the
+  brightness (it ended the live effect and switched app profiles off); app profiles with *Keyboard's own effect* as
+  the default apply it at once; app rules with wrong options are refused with the reason, and a rule that fails
+  anyway shows in Recent events; clearing live key colours gives the keyboard back instead of leaving it black; the
+  mic-mute indicator no longer opens the microphone again ~18 times a second; Shift+Alt shortcut hints show in VS Code
+  and Windows Terminal; `evrgb live solid color=990000` works, and so do `evrgb apps` rules with any effect.
 
 ## 0.6.0 (2026-10-11)
 - New live effects after FastLED's classic examples (MIT): **Fire** (a flame in every column, after Fire2012),

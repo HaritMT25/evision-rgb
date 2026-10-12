@@ -475,11 +475,11 @@ class PadManager:
                     step = 1 if t == "profile_next" else -1
                     i = (0 if step > 0 else len(ps) - 1) if cur is None else (cur + step) % len(ps)
                     ctl.apply_profile(ps[i])
-            elif t == "brightness":
+            elif t == "brightness":  # only the brightness: what runs (and app profiles) goes on
                 b = ctl.kb.info()["brightness"]
                 nb = max(0, min(4, b + int(a["step"])))
                 if nb != b:  # stored on the keyboard: never write when nothing changes
-                    ctl.set_hardware(brightness=nb)
+                    ctl._store_brightness(nb)
             elif t == "hardware":
                 ctl.set_hardware(**{k: v for k, v in a.items() if k != "type"})
             elif t == "notify":

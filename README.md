@@ -56,10 +56,10 @@ and knobs, a desktop app, an HTTP API and an MCP server for AI agents.
 - **Desktop app**: AJAZZ-style UI with a live preview of the keyboard, tray icon, start with Windows, conflict detector.
   It reconnects by itself when the keyboard is replugged or the PC wakes up, and starts without the keyboard.
 - **For agents and scripts**: a local HTTP JSON API and an **MCP server**, so Claude or another agent can drive the lights.
-- **Safe by design**: only commands confirmed from the vendor app are on the keyboard's allow-list. Firmware-update,
-  keymap and macro writes are never sent, and everything written is read back and verified. Pads get only the
-  documented display and keep-alive commands; boot-logo and config writes are refused. The local API answers only
-  programs on this PC, so web pages cannot drive it.
+- **Safe by design**: only commands confirmed from the vendor app are on the keyboard's allow-list, each for the memory
+  the vendor app uses. Firmware-update, keymap and macro writes are never sent, and everything written is read back
+  and verified. Pads get only the documented display and keep-alive commands; boot-logo and config writes are
+  refused. The local API answers only programs on this PC, so web pages cannot drive it.
 - The app backs up the keyboard's lighting the first time it connects, and can restore it any time.
 - **Recent events and diagnostics**: Other Settings lists what happened with times (the keyboard disconnecting,
   battery and mains, what the battery saver did, errors) and copies a diagnostics block for bug reports, with
@@ -166,6 +166,9 @@ node scripts\ui_smoke.mjs 8899                   # drives the UI in headless Edg
 - **USB audio (earbuds, a DAC) cuts out on battery**: the keyboard's lights are powered by the laptop's USB port.
   Automation → *Battery saver* → set the keyboard's brightness on battery to 2 or lower.
 - **Another RGB program fights over the keyboard**: Other Settings lists the conflicting programs it found.
+- **Your settings are back to the defaults**: if `%APPDATA%\EVisionRGB\settings.json` couldn't be read (damaged, or
+  edited into something that isn't JSON), the app starts from the defaults and keeps the old file next to it as
+  `settings.json.bad-<date>`; Recent events says so.
 - **Reporting a bug**: Other Settings → *Copy diagnostics* and paste it into the issue (tokens are hidden and your
   home folder shows as `~`).
 

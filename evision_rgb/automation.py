@@ -112,29 +112,42 @@ class _AppProbe:
 
 
 class _MicProbe:
-    """Default capture device mute state via Core Audio (pycaw); False if unavailable."""
+    """Default capture device mute state via Core Audio (pycaw); False if unavailable. The automation loop and the
+    render thread both ask: the thread that opened the (per-thread COM) endpoint reads it, the others get its last
+    reading; it is opened again only when that thread is gone."""
 
     def __init__(self):
         self.vol = None
         self.failed = False
         self.thread = None
+        self.value = False
+        self.lock = threading.Lock()
+
+    def _open(self):
+        import comtypes
+        from ctypes import POINTER, cast
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+        comtypes.CoInitialize()
+        mic = AudioUtilities.GetMicrophone()
+        iface = mic.Activate(IAudioEndpointVolume._iid_, comtypes.CLSCTX_ALL, None)
+        return cast(iface, POINTER(IAudioEndpointVolume))
 
     def __call__(self) -> bool:
         if self.failed:
             return False
-        try:
-            if self.vol is None or self.thread is not threading.current_thread():
-                import comtypes
-                from ctypes import POINTER, cast
-                from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-                comtypes.CoInitialize()
-                mic = AudioUtilities.GetMicrophone()
-                iface = mic.Activate(IAudioEndpointVolume._iid_, comtypes.CLSCTX_ALL, None)
-                self.vol, self.thread = cast(iface, POINTER(IAudioEndpointVolume)), threading.current_thread()
-            return bool(self.vol.GetMute())
-        except Exception:
-            self.failed = True  # no pycaw / no microphone: indicator stays off
-            return False
+        me = threading.current_thread()
+        with self.lock:
+            owner = self.thread
+            if self.vol is not None and owner is not me and owner is not None and owner.is_alive():
+                return self.value
+            try:
+                if self.vol is None or owner is not me:
+                    self.vol, self.thread = self._open(), me
+                self.value = bool(self.vol.GetMute())
+                return self.value
+            except Exception:
+                self.failed = True  # no pycaw / no microphone: indicator stays off
+                return False
 
 
 # ------------------------------------------------------------------------------ automation

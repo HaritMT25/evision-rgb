@@ -40,6 +40,13 @@ ALLOWED_WRITES = {CMD_BEGIN, CMD_END, CMD_WRITE_CONFIG, CMD_WRITE_CUSTOM, CMD_DI
 
 MAP_SIZE = 128  # LED slots, index = column*8 + row
 
+# the memory each command may touch (offset .. offset + length): what the official app reads and writes. The three
+# custom colour areas sit 0x200 apart; past them is the keyboard's program memory (docs/FIRMWARE.md).
+CUSTOM_AREAS = tuple((0x200 * a, 0x200 * a + 3 * MAP_SIZE) for a in range(3))
+RANGES = {CMD_READ_CAPS: ((0, 0x22),), CMD_READ_CONFIG: ((0, 0x80),), CMD_WRITE_CONFIG: ((0, 0x1D),),
+          CMD_READ_KEYMAP: ((0, 3 * MAP_SIZE),), CMD_READ_CUSTOM: CUSTOM_AREAS, CMD_WRITE_CUSTOM: CUSTOM_AREAS,
+          CMD_DIRECT: ((0, 3 * MAP_SIZE),), CMD_READ_1B: ((0, 0x80),)}  # (the others: no data at all)
+
 # Hardware (firmware) effects. Names/order from the official AK820 app (lan_en.xml + default_light.json),
 # whose list values equal the device mode ids (6 = static and 20 = custom verified on hardware).
 MODES = {
@@ -149,6 +156,8 @@ class AK820:
             raise ProtocolError(f"command {cmd:#04x} is not on the allow-list")
         if cmd in ALLOWED_WRITES and not self.allow_writes:
             raise ProtocolError(f"command {cmd:#04x} writes to the device; open with allow_writes=True")
+        if not any(lo <= offset and offset + max(length, len(data)) <= hi for lo, hi in RANGES.get(cmd, ((0, 0),))):
+            raise ProtocolError(f"command {cmd:#04x} at {offset:#x}+{length} is outside what the official app uses")
         pkt = build(cmd, length, offset, data)
         with self.lock:
             if not self.connected:

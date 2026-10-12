@@ -27,6 +27,22 @@ def _val(v: str):
     return {"true": True, "false": False}.get(v.lower(), v)
 
 
+def _params(effect: str, pairs) -> dict:
+    """name=value options for an effect. An option whose default is text or None (colours like 990000, styles)
+    keeps the text as it is; the others become numbers / true / false."""
+    import inspect
+    from .effects import EFFECTS
+    try:
+        options = inspect.signature(EFFECTS[effect]).parameters
+    except (KeyError, TypeError, ValueError):  # (an unknown effect: Engine.run says so)
+        options = {}
+    out = {}
+    for k, v in pairs:
+        p = options.get(k)
+        out[k] = v if p is not None and (p.default is None or isinstance(p.default, str)) else _val(v)
+    return out
+
+
 def load_effects() -> dict:
     """Every live effect the app knows: some modules add theirs to EFFECTS when they are imported."""
     from . import emulate, games, heatmap, media, openrgb, scenes  # noqa: F401  (emulate, keyboard, heatmap, nowplaying,
@@ -54,7 +70,7 @@ def main(argv=None):
     e.add_argument("--random", action="store_true", default=None)
     c = sub.add_parser("custom")
     c.add_argument("--all", default="000000", help="colour for keys not listed")
-    c.add_argument("--colorset", type=int, default=0)
+    c.add_argument("--colorset", type=int, default=0, choices=range(3))
     c.add_argument("pairs", nargs="*", help="KEY=RRGGBB")
     lv = sub.add_parser("live")
     lv.add_argument("effect")
@@ -97,6 +113,7 @@ def main(argv=None):
                 kb.set_custom(kb.dev.read_custom(0), colorset=0)
             print(json.dumps(kb.info(), indent=2))
         elif a.cmd == "apps":
+            load_effects()  # (rules may use any of them)
             from .apps import AppProfiles
             from .effects import Engine
             eng = Engine(kb)
@@ -117,7 +134,7 @@ def main(argv=None):
             load_effects()
             from .effects import Engine
             eng = Engine(kb)
-            params = {k: _val(v) for k, v in (x.split("=", 1) for x in a.params)}
+            params = _params(a.effect, (x.split("=", 1) for x in a.params))
             print(eng.run(a.effect, **params))
             t0 = time.monotonic()
             try:

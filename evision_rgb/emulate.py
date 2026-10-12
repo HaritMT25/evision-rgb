@@ -13,7 +13,7 @@ import time
 import numpy as np
 
 from .effects import EFFECTS, INDEX, N, X, Y, Effect, KeyEvents, hsv, rgbf
-from .protocol import MODES
+from .protocol import MODES, ProtocolError
 
 ID = {v: k for k, v in MODES.items()}
 RATE = (2.0, 1.4, 1.0, 0.7, 0.45)  # device speed 0 (fastest) .. 4 (slowest)
@@ -341,9 +341,11 @@ def set_stored_effect(fn):
 class StoredEffect(Effect):
     """The keyboard's own stored (built-in) effect, emulated on this PC (exact when the firmware is
     available). Use it as the bottom layer to put live layers on top of a built-in effect. Read from the
-    keyboard when the effect starts; only available inside the app / `evrgb serve`."""
+    keyboard when the effect starts (black until the keyboard is plugged in, asked again every RETRY_S);
+    only available inside the app / `evrgb serve`."""
     name = "keyboard"
     fps = 60
+    RETRY_S = 1.0
 
     def __init__(self):
         self.source = _STORED["fn"]
@@ -351,22 +353,35 @@ class StoredEffect(Effect):
             raise ValueError("the keyboard's stored effect is only known while the EVision RGB app (or `evrgb serve`) runs")
         self.emu = None
         self.raw = False
+        self.started = False
+        self._next_try = 0.0
 
     def _emulator(self):
-        if self.emu is None:
-            self.emu = _make_emulate(**self.source())
-            self.raw = getattr(self.emu, "raw", False)
+        """The emulator of what the keyboard stores, or None while the keyboard can't be asked (not plugged in)."""
+        if self.emu is None and time.monotonic() >= self._next_try:
+            try:
+                emu = _make_emulate(**self.source())
+            except (ProtocolError, OSError):
+                self._next_try = time.monotonic() + self.RETRY_S
+                return None
+            self.raw = getattr(emu, "raw", False)
+            if self.started:
+                emu.start()
+            self.emu = emu
         return self.emu
 
     def start(self):
-        self._emulator().start()
+        self.started = True
+        self._emulator()
 
     def stop(self):
+        self.started = False
         if self.emu is not None:
             self.emu.stop()
 
     def render(self, t):
-        return self._emulator().render(t)
+        emu = self._emulator()
+        return np.zeros((N, 3)) if emu is None else emu.render(t)
 
 
 EFFECTS["keyboard"] = StoredEffect
