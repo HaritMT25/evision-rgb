@@ -128,6 +128,13 @@ class Workflow(unittest.TestCase):
                        "release_notes.py", "app-constraints.txt", "Version matches the tag"):
             self.assertIn(needle, wf)
 
+    def test_a_new_build_keeps_the_compiled_firmware_engine(self):
+        # numba's cache is keyed by the source's mtime: the bundled copy must not carry the build time
+        sh = read("scripts", "build_exe.sh")
+        self.assertIn('git log -1 --format=%cI -- evision_rgb/fw8051_fast.py', sh)
+        self.assertIn('touch -d "$T" "$F"', sh)
+        self.assertIn("fetch-depth: 0", read(".github", "workflows", "release.yml"), "a shallow clone dates every file by HEAD")
+
     def test_the_app_extra_bundles_everything(self):
         py = read("pyproject.toml")
         self.assertRegex(py, r'app = \["evision-rgb\[gui,effects,pads,media,emulation\]"\]')

@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }  # build_exe.sh dates the bundled firmware engine by its last commit
       - uses: actions/setup-python@v6
         with: { python-version: "3.14" }
       - name: Install (pinned to the versions the app is tested with)

@@ -156,6 +156,19 @@ python scripts\ui_preview_server.py 8899        # the app UI on http://127.0.0.1
 node scripts\ui_smoke.mjs 8899                   # drives the UI in headless Edge/Chrome; fails on any JS error
 ```
 
+## Troubleshooting
+- **Something happened and you want to know when**: Other Settings → *Recent events* lists the keyboard
+  disconnecting and coming back, battery and mains, what the battery saver did, and errors, with times. The full
+  list is `%APPDATA%\EVisionRGB\events.log`.
+- **The keyboard shows its own effect whatever you pick**: the status line says *keyboard disconnected* while the
+  app can't reach it; it reconnects by itself within a second of the keyboard coming back. A bus-powered hub that
+  keeps dropping devices shows up in Recent events as repeated disconnects.
+- **USB audio (earbuds, a DAC) cuts out on battery**: the keyboard's lights are powered by the laptop's USB port.
+  Automation → *Battery saver* → set the keyboard's brightness on battery to 2 or lower.
+- **Another RGB program fights over the keyboard**: Other Settings lists the conflicting programs it found.
+- **Reporting a bug**: Other Settings → *Copy diagnostics* and paste it into the issue (tokens are hidden and your
+  home folder shows as `~`).
+
 ## How it works
 See **[docs/PROTOCOL.md](docs/PROTOCOL.md)** for the full EVision V2 protocol, LED map and firmware quirks.
 
