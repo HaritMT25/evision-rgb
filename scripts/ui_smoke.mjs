@@ -190,6 +190,16 @@ try {
   await js(`Object.defineProperty(document, "hidden", {value: false, configurable: true});
             document.dispatchEvent(new Event("visibilitychange")); await T.wait(600);`);
   check("and resumes when it is shown", await js(`return !!S.es && S.es.readyState !== 2`));
+  // hidden by the app: WebView2 still says "visible" once the window is hidden in the tray or minimised
+  await js(`window.__asked = []; window.__fetch = window.fetch;
+            window.fetch = (u, o) => { __asked.push(String(u)); return __fetch(u, o); };
+            evrgbShown(false); await T.wait(2600);`);
+  check("the preview stream pauses when the app says the window is hidden", await js(`return S.es === null`));
+  check("and nothing is polled meanwhile", await js(`return __asked.length === 0`), await js(`return __asked.join(" ")`));
+  await js(`evrgbShown(true); await T.wait(1500);`);
+  check("both come back when it is shown", await js(`return !!S.es && S.es.readyState !== 2 &&
+                                                    __asked.some(u => u.includes("/status"))`));
+  await js(`window.fetch = __fetch;`);
 
   // ---- album colours (the preview server pretends "Demo Song" with a pink/blue cover is playing)
   await js(`showTab("live"); setLiveView("cards"); await T.wait(2600);`);

@@ -98,6 +98,9 @@ class App:
         self.window = None
         self.tray = None
         self.quitting = False
+        self._away = {"tray": False, "minimized": False}  # why the window can't be seen (see _tell_page)
+        self._told = True  # what the page was last told: it starts as shown (one that starts hidden knows it is)
+        self._tell_lock = threading.Lock()
 
     # ---------------------------------------------------------------- lifecycle
     def start_backend(self):
@@ -116,10 +119,36 @@ class App:
         if self.window:
             self.window.show()
             self.window.restore()
+            self._away.update(tray=False, minimized=False)
+            self._tell_page()
 
     def hide(self):
         if self.window:
             self.window.hide()
+            self._away["tray"] = True
+            self._tell_page()
+
+    def _minimized(self, yes: bool):
+        self._away["minimized"] = yes
+        self._tell_page()
+
+    def _tell_page(self):
+        """WebView2 tells the page it is hidden when the app starts hidden, but not when the window is hidden or
+        minimised later, so the page went on drawing the 60 fps preview and polling for nobody (over the keyboard's
+        own effect: its firmware emulated 60 times a second). The app tells it, from a thread (a page still loading
+        never holds up a tray click)."""
+        threading.Thread(target=self._tell, daemon=True).start()
+
+    def _tell(self):
+        with self._tell_lock:  # one at a time, each saying how the window is now
+            shown = not any(self._away.values())
+            if shown == self._told:
+                return
+            try:
+                self.window.evaluate_js(f"window.evrgbShown && evrgbShown({'true' if shown else 'false'})")
+                self._told = shown
+            except Exception:  # noqa: BLE001 - the page is loading, or the window closing: told next time
+                pass
 
     def on_closing(self):
         if self.quitting or not self.ctl.settings.get("close_to_tray", True):
@@ -232,11 +261,14 @@ class App:
         self.start_backend()
         self.start_tray()
         hidden = self.background and self.ctl.settings.get("start_minimized", True)
+        self._away["tray"] = hidden
         self.window = webview.create_window(
             "EVision RGB", f"http://127.0.0.1:{self.port}/", width=_window_size()[0], height=_window_size()[1],
             min_size=(1000, 660),
             hidden=hidden, background_color="#0b0b0c", js_api=JsApi(self))
         self.window.events.closing += self.on_closing
+        self.window.events.minimized += lambda: self._minimized(True)
+        self.window.events.restored += lambda: self._minimized(False)
         webview.start(gui="edgechromium", private_mode=False,
                       storage_path=os.path.join(settings_mod.DIR, "webview"), icon=ICON_ICO)
         if not self.quitting:  # window closed without tray (close_to_tray off)

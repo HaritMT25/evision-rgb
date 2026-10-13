@@ -85,14 +85,30 @@ class _Event(list):
 
 class FakeWindow:
     def __init__(self):
-        self.events = types.SimpleNamespace(closing=_Event())
+        self.events = types.SimpleNamespace(closing=_Event(), minimized=_Event(), restored=_Event())
         self.open, self.shown = True, 0
+        self.told, self.js_error = [], None  # what the page was told: shown (True) / hidden (False)
 
     def close_button(self):  # the window's X: it closes unless a handler cancels
         if self.open and all(h() is not False for h in self.events.closing):
             self.open = False
 
     destroy = close_button
+
+    def minimize_button(self):
+        for h in self.events.minimized:
+            h()
+
+    def restore_button(self):
+        for h in self.events.restored:
+            h()
+
+    def evaluate_js(self, script):
+        if self.js_error:
+            raise self.js_error
+        for word in ("true", "false"):
+            if f"evrgbShown({word})" in script:
+                self.told.append(word == "true")
 
     def show(self):
         self.shown += 1
@@ -166,7 +182,9 @@ class FakeGui:
         assert not self.window.open, "the window is still open: the real webview.start() would never return"
 
 
-class DesktopApp(unittest.TestCase):
+class _DesktopCase(unittest.TestCase):
+    """The desktop app (App.run) with a simulated keyboard, no pads and the fake window / tray icon."""
+
     def setUp(self):
         warnings.simplefilter("ignore", ResourceWarning)
         self.kb = install(self)
@@ -203,6 +221,8 @@ class DesktopApp(unittest.TestCase):
         app.run()
         return app, fake
 
+
+class DesktopApp(_DesktopCase):
     def test_quit_from_the_tray_saves_the_heatmap(self):
         def user(window, icon):
             for _ in range(40):

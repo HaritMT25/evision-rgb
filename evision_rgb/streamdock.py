@@ -107,13 +107,16 @@ MODELS = {m.id: m for m in (
     _akp153("hsv293s", "Mirabox HSV293S", ((0x5548, 0x6670),), 1),
 )}
 BY_USB = {usb: m for m in MODELS.values() for usb in m.usb}
+VENDORS = sorted({vid for vid, _ in BY_USB})
 FAMILIES = {"akp03": MODELS["akp03e-rev2"], "akp153": MODELS["akp153e-rev2"]}  # layout used when none is plugged in
 
 
 def scan() -> list[tuple[Model, bytes]]:
-    """Connected supported pads as (model, HID path). Read-only: nothing is opened."""
+    """Connected supported pads as (model, HID path). Read-only: nothing is opened. Only the pads' vendors are
+    listed: hidapi reads the name strings of every device it lists, and this runs every 2 s while no pad is plugged
+    in (listing everything asked every USB input device, earbuds included, for its name all day)."""
     found, seen = [], set()
-    for d in hid.enumerate():
+    for d in (d for vid in VENDORS for d in hid.enumerate(vid, 0)):
         m = BY_USB.get((d.get("vendor_id"), d.get("product_id")))
         page = d.get("usage_page")
         vendor_iface = page == USAGE_PAGE or (not page and d.get("interface_number") == 0)  # no usage pages (Linux)

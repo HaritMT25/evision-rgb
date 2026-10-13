@@ -7,7 +7,15 @@ const S = {
   layout: null, modes: [], settings: null, info: null, status: null,
   custom: {}, sel: new Set(), brush: "ff0000", group: 0, dirty: false,
   tab: "light", keyEls: {}, frameBusy: false, lastFrameAt: 0, hwBrushColor: "ff0000",
-  cHist: null, layers: [], lySel: null, lyHist: null, liveView: "cards", profileName: null,
+  cHist: null, layers: [], lySel: null, lyHist: null, liveView: "cards", profileName: null, shown: true,
+};
+// The window can't be seen: hidden in the tray or minimised. WebView2 says so to a page that starts hidden, but not
+// when the window is hidden later, so the app tells the page (evrgbShown); the preview and the polls then pause.
+function away() { return document.hidden || !S.shown; }
+window.evrgbShown = shown => {
+  if (S.shown === !!shown) return;
+  S.shown = !!shown;
+  document.dispatchEvent(new Event("visibilitychange"));  // (what a real change runs: the preview, Light Settings)
 };
 const NO_EFFECT = "";  // app rules: keep the keyboard's own effect
 
@@ -164,13 +172,13 @@ function startStream() {
   if (!window.EventSource) return previewLoop();
   S.es = null;
   const open = () => {
-    if (S.es || document.hidden) return;  // window hidden in the tray: no 60 fps preview for nobody
+    if (S.es || away()) return;  // window hidden in the tray or minimised: no 60 fps preview for nobody
     const es = S.es = new EventSource("/stream");
     es.onmessage = e => { try { showFrame(JSON.parse(e.data)); } catch (err) { } };
     es.onerror = () => { es.close(); if (S.es === es) S.es = null; setTimeout(open, 1500); };  // reconnect (app restarting, …)
   };
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { if (S.es) S.es.close(); S.es = null; } else open();
+    if (away()) { if (S.es) S.es.close(); S.es = null; } else open();
   });
   open();
   const local = () => { if (S.tab === "custom" && (S.dirty || Object.keys(S.custom).length)) colorKeys(S.custom); setTimeout(local, 200); };
@@ -216,6 +224,7 @@ function setCaption(f) {
 
 // ------------------------------------------------------------------ status
 async function statusLoop() {
+  if (away() && S.status) return setTimeout(statusLoop, 1000);  // (nobody sees it: asked again when shown)
   try {
     const was = S.status && S.status.keyboard;
     S.status = await api("/status");
@@ -242,8 +251,10 @@ async function statusLoop() {
   setTimeout(statusLoop, 1000);
 }
 async function conflictLoop() {
+  if (away() && S.conflictsSeen) return setTimeout(conflictLoop, 1000);
   try {
     const c = await api("/conflicts");
+    S.conflictsSeen = true;
     const pill = $("#conflictPill");
     pill.style.display = c.length ? "" : "none";
     pill.textContent = `⚠ ${c.length} conflicting program${c.length > 1 ? "s" : ""}`;
@@ -329,7 +340,7 @@ function initLight() {
   // the window comes back (from the tray, another program): show what is stored now
   const fresh = () => { if (!Object.keys(hwPending).length) loadInfo().catch(() => { }); };
   window.addEventListener("focus", fresh);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) fresh(); });
+  document.addEventListener("visibilitychange", () => { if (!away()) fresh(); });
 }
 
 // ------------------------------------------------------------------ custom tab
@@ -509,7 +520,7 @@ function initLive() {
 // what is playing, shown in the Album colours card while the Live tab is open
 async function npLoop() {
   const el = $("#npInfo");
-  if (el && S.tab === "live" && !document.hidden) {
+  if (el && S.tab === "live" && !away()) {
     try {
       const n = await api("/nowplaying");
       if (!n.available) el.innerHTML = `<span class="hint">${esc(n.reason || "This PC cannot say what is playing.")}</span>`;
@@ -770,7 +781,7 @@ async function initAutomation() {
     if (await modal("Clear the heatmap?", "All key counts are deleted.", [["Cancel", false], ["Clear", true, "primary"]]))
       hm(await api("/heatmap", { clear: true }));
   };
-  setInterval(async () => { if (S.tab === "auto") hm(await api("/heatmap").catch(() => ({ enabled: false, total: 0 }))); }, 5000);
+  setInterval(async () => { if (S.tab === "auto" && !away()) hm(await api("/heatmap").catch(() => ({ enabled: false, total: 0 }))); }, 5000);
 }
 function renderBattery() {
   const b = S.status && S.status.battery, el = $("#batStatus");
@@ -817,7 +828,7 @@ async function gamesLoad() {
 function initGames() {
   $("#gamesAuto").onchange = () => safe(() => api("/games", { auto: $("#gamesAuto").checked }));
   gamesLoad().catch(() => { });
-  setInterval(() => { if (S.tab === "games" && !document.hidden) gamesLoad().catch(() => { }); }, 3000);
+  setInterval(() => { if (S.tab === "games" && !away()) gamesLoad().catch(() => { }); }, 3000);
 }
 
 // ------------------------------------------------------------------ app profiles tab
@@ -887,7 +898,7 @@ async function eventsLoad() {
 }
 function initEvents() {
   eventsLoad().catch(() => { });
-  setInterval(() => { if (S.tab === "settings" && !document.hidden) eventsLoad().catch(() => { }); }, 3000);
+  setInterval(() => { if (S.tab === "settings" && !away()) eventsLoad().catch(() => { }); }, 3000);
 }
 function initOpenRGB() {
   const save = () => safe(async () => {
@@ -897,7 +908,7 @@ function initOpenRGB() {
   $("#orgbOn").onchange = save;
   $("#orgbPort").onchange = save;
   orgbLoad().catch(() => { });
-  setInterval(() => { if (S.tab === "settings" && !document.hidden) orgbLoad().catch(() => { }); }, 3000);
+  setInterval(() => { if (S.tab === "settings" && !away()) orgbLoad().catch(() => { }); }, 3000);
 }
 async function initSettings() {
   const a = await api("/autostart");
@@ -1249,7 +1260,7 @@ function initPad() {
   $("#padBright").oninput = () => { padCfg().brightness = +$("#padBright").value; $("#padBrightV").textContent = $("#padBright").value + "%"; saveB(); };
   padLoad().catch(e => toast("Macro pad: " + e.message, true));
   setInterval(async () => {  // follow plug / unplug and what is lit on the pad
-    if (S.tab !== "pad") return;
+    if (S.tab !== "pad" || away()) return;
     try {
       const st = await api("/pad"), was = S.pad.st;
       const changed = st.connected !== was.connected || st.active !== was.active || (st.model || {}).id !== (was.model || {}).id;

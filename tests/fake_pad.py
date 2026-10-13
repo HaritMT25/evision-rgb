@@ -207,15 +207,18 @@ class FakePadHid:
     def __init__(self, *pads: FakePad, extra: list[dict] | None = None):
         self.pads = {p.path: p for p in pads}
         self.extra = extra or []  # other HID interfaces present on the system
+        self.calls = []  # (vendor, product) of every listing; 0 = any, as in hidapi
 
     def add(self, pad: FakePad):
         self.pads[pad.path] = pad
 
     def enumerate(self, vid=0, pid=0):
+        self.calls.append((vid, pid))
         out = [{"vendor_id": p.vid, "product_id": p.pid, "usage_page": USAGE_PAGE, "usage": 1, "path": p.path,
                 "interface_number": 0, "serial_number": "355499441494", "product_string": "fake pad"}
                for p in self.pads.values() if not p.unplugged]
-        return out + list(self.extra)
+        return [d for d in out + list(self.extra)
+                if (not vid or d.get("vendor_id") == vid) and (not pid or d.get("product_id") == pid)]
 
     def device(self):
         return _Handle(self)

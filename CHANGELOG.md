@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.2 (2026-10-12)
+- **Lighter in the tray**: once the window had been opened and closed to the tray (or minimised), it went on drawing
+  the live preview 60 times a second for nobody, and asking for the status every second. Over the keyboard's own
+  effect that meant running its firmware 60 times a second, about 30% of a CPU core, on battery too. WebView2 tells
+  the page it is hidden only when the app starts hidden, so now the app tells it, and the preview and the window's
+  polling pause until it is shown again.
+- **No more questions to other USB devices**: while no macro pad is plugged in, the app looks for one every 2
+  seconds. It listed every USB input device to do that, which reads each one's name (earbuds and headsets with
+  buttons included). Now it lists only the pads' own vendors.
+
 ## 0.7.1 (2026-10-12)
 - **Fixes in the app window**, from a review of it:
   - *Light Settings* sends only what you change. Moving one slider stored every field as the form showed it, which
